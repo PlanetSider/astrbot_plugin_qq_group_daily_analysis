@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, TypeGuard
 
+from ...domain.value_objects.report_delivery import GroupReportTarget
 from ...shared.constants import PLUGIN_NAME
 from ...utils.logger import logger
 from . import PlatformAdapter, PlatformAdapterFactory
@@ -399,6 +400,49 @@ class BotManager:
             return str(p_id)
         # 3. 兜底读取 platform_name
         return str(getattr(adapter, "platform_name", "") or "")
+
+    def validate_qq_official_report_target(
+        self,
+        target: GroupReportTarget,
+        source_group_id: str,
+        source_platform_id: str | None,
+    ) -> GroupReportTarget:
+        """校验 QQ 官方目标并返回规范化的实际平台实例。
+
+        Args:
+            target: 已解析的目标群会话。
+            source_group_id: 被分析的源群 ID。
+            source_platform_id: 源群所属平台实例 ID。
+
+        Returns:
+            使用真实 QQ 官方实例 ID 的目标群。
+
+        Raises:
+            ValueError: 实例不可用、不是 QQ 官方、仅填写协议别名或目标是原群。
+        """
+        requested_id = (target.platform_id or "").strip()
+        adapter = self.get_adapter(requested_id)
+        if adapter is None:
+            raise ValueError("QQ 官方目标平台未连接，请检查目标群 /sid 中的平台实例 ID")
+        if adapter.get_platform_name() != "qq_official":
+            raise ValueError("QQ 官方投递目标必须使用 AstrBot 已接入的 QQ 官方机器人")
+        actual_id = self.get_adapter_platform_id(adapter).strip()
+        if not requested_id or actual_id.casefold() != requested_id.casefold():
+            raise ValueError("QQ 官方目标必须填写实际平台实例 ID，不能仅填写协议类型")
+        if target.group_id == source_group_id:
+            source_adapter = self.get_adapter(source_platform_id)
+            source_id = (
+                self.get_adapter_platform_id(source_adapter).strip()
+                if source_adapter is not None
+                else ""
+            )
+            if (
+                (source_platform_id or "").strip().casefold() == actual_id.casefold()
+                or source_adapter is adapter
+                or (source_id and source_id.casefold() == actual_id.casefold())
+            ):
+                raise ValueError("QQ 官方投递目标不能是原群，请填写另外一个群")
+        return GroupReportTarget(group_id=target.group_id, platform_id=actual_id)
 
     def get_all_adapters(self) -> dict[str, PlatformAdapter]:
         """获取所有 PlatformAdapter 实例 {platform_id: adapter}"""
