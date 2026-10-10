@@ -206,7 +206,7 @@
     "report_delivery": {
         "description": "总结投递",
         "type": "object",
-        "hint": "设置群总结的唯一发送目标，适用于手动、定时、增量及控制台发送。指定群或 Server酱模式不会向原群发送总结，投递失败也不会回发原群。独立的群漫画仍由漫画设置控制。",
+        "hint": "设置群总结及漫画的唯一发送目标，适用于手动、定时、增量及控制台发送。指定群模式仅向目标群发送总结、漫画及相册备份；Server酱模式仅推送文本总结并跳过漫画。投递失败不会回发原群，漫画开关和名单仍由漫画设置控制。",
         "items": {
             "destination": {
                 "type": "string",
@@ -214,7 +214,7 @@
                 "options": ["source_group", "forward_group", "serverchan"],
                 "labels": ["原群", "指定群（停止发送原群）", "Server酱机器人（停止发送原群）"],
                 "default": "source_group",
-                "hint": "默认发送原群。选择指定群会保留原输出格式；Server酱机器人使用官方 sendMessage 接口发送文本总结，不受图片/HTML 输出格式限制。"
+                "hint": "默认发送原群。选择指定群会保留原输出格式，并将漫画及相册备份发到指定群；Server酱机器人使用官方 sendMessage 接口发送文本总结，不受图片/HTML 输出格式限制，群漫画会直接跳过。"
             },
             "forward_target": {
                 "type": "string",

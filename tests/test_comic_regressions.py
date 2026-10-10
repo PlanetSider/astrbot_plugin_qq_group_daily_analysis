@@ -799,7 +799,10 @@ def test_comic_is_skipped_without_valid_topics():
     trigger_comic = load_main_method("_try_trigger_comic_generation")
     plugin = SimpleNamespace(
         _terminating=False,
-        config_manager=SimpleNamespace(get_enable_daily_comic=Mock(return_value=True)),
+        config_manager=SimpleNamespace(
+            get_enable_daily_comic=Mock(return_value=True),
+            get_report_delivery_mode=Mock(return_value="source_group"),
+        ),
         _comic_group_tasks={},
         _background_tasks=set(),
         _trigger_comic_generation=AsyncMock(),
@@ -819,6 +822,7 @@ def test_comic_generation_observes_comic_group_filter():
         _terminating=False,
         config_manager=SimpleNamespace(
             get_enable_daily_comic=Mock(return_value=True),
+            get_report_delivery_mode=Mock(return_value="source_group"),
             is_comic_group_allowed=Mock(return_value=False),
         ),
         _comic_group_tasks={},
@@ -1463,6 +1467,11 @@ def test_comic_delivery_sniffs_cached_file_extension_after_generation(tmp_path):
     adapter = SimpleNamespace(send_image=AsyncMock())
     comic_bytes = b"\xff\xd8\xffjpeg-payload"
     plugin = SimpleNamespace(
+        config_manager=SimpleNamespace(
+            get_report_delivery_mode=Mock(return_value="source_group"),
+            get_show_report_caption=Mock(return_value=False),
+        ),
+        plugin_data_dir=tmp_path,
         _comic_semaphore=asyncio.Semaphore(1),
         _terminating=False,
         _detect_image_ext=detect_image_ext,
