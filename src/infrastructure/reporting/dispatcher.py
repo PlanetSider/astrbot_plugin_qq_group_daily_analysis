@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-from ...domain.value_objects.report_delivery import GroupReportTarget
+from ...domain.value_objects.report_delivery import (
+    FORWARD_GROUP_DELIVERY_MODES,
+    QQ_OFFICIAL_DELIVERY_MODES,
+    SERVERCHAN_DELIVERY_MODES,
+    GroupReportTarget,
+)
 from ...shared.constants import AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
@@ -93,7 +98,7 @@ class ReportDispatcher:
             output_formats: 本次使用的格式；手动入口仅传首个格式。
 
         Returns:
-            至少一个已启用通道发送成功时返回 True。
+            至少一个通道成功，或配置要求跳过投递时返回 True。
         """
         trace_id = TraceContext.get()
         trace = TraceContext.current()
@@ -104,18 +109,43 @@ class ReportDispatcher:
             return False
         if trace:
             trace.metadata["report_destination"] = mode
+        if mode == "disabled":
+            if trace:
+                trace.metadata["report_delivery_skipped"] = True
+                trace.metadata["report_delivery_results"] = {}
+            logger.info(f"[{trace_id}] 群 {group_id} 按总结投递配置跳过发送")
+            return True
 
-        forward_enabled = mode in {"forward_group", "forward_group_and_serverchan"}
-        serverchan_enabled = mode in {"serverchan", "forward_group_and_serverchan"}
+        forward_enabled = mode in FORWARD_GROUP_DELIVERY_MODES
+        qq_official_enabled = mode in QQ_OFFICIAL_DELIVERY_MODES
+        serverchan_enabled = mode in SERVERCHAN_DELIVERY_MODES
         channel_results: dict[str, bool] = {}
-        if mode != "serverchan":
+        group_channels: list[str] = []
+        if mode == "source_group" or forward_enabled:
+            group_channels.append("group")
+        if qq_official_enabled:
+            group_channels.append("qq_official")
+        for channel in group_channels:
             try:
-                target = (
-                    self.config_manager.get_forward_report_target(group_id, platform_id)
-                    if forward_enabled
-                    else GroupReportTarget(group_id, platform_id)
-                )
-                if forward_enabled and target.group_id == group_id:
+                if channel == "qq_official":
+                    target = self.message_sender.bot_manager.validate_qq_official_report_target(
+                        self.config_manager.get_qq_official_report_target(),
+                        group_id,
+                        platform_id,
+                    )
+                else:
+                    target = (
+                        self.config_manager.get_forward_report_target(
+                            group_id, platform_id
+                        )
+                        if forward_enabled
+                        else GroupReportTarget(group_id, platform_id)
+                    )
+                if (
+                    forward_enabled
+                    and channel == "group"
+                    and target.group_id == group_id
+                ):
                     bot_manager = self.message_sender.bot_manager
                     source_adapter = bot_manager.get_adapter(platform_id)
                     target_adapter = bot_manager.get_adapter(target.platform_id)
@@ -134,13 +164,13 @@ class ReportDispatcher:
                         or (source_id and source_id.casefold() == target_id.casefold())
                     ):
                         raise ValueError("转发目标不能是原群，请填写另外一个群")
-                channel_results["group"] = await self._dispatch_group_reports(
+                channel_results[channel] = await self._dispatch_group_reports(
                     group_id, analysis_result, platform_id, target, output_formats
                 )
             except Exception as exc:
                 detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-                logger.error(f"[{trace_id}] 群总结投递失败：{detail}")
-                channel_results["group"] = False
+                logger.error(f"[{trace_id}] 群总结投递失败（{channel}）：{detail}")
+                channel_results[channel] = False
 
         if serverchan_enabled:
             try:
