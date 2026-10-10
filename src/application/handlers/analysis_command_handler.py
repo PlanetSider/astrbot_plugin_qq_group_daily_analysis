@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ...infrastructure.messaging.message_sender import MessageSender
     from ...infrastructure.persistence.trace_sqlite_store import TraceSQLiteStore
     from ...infrastructure.platform.bot_manager import BotManager
+    from ...infrastructure.reporting.dispatcher import ReportDispatcher
     from ...infrastructure.reporting.generators import ReportGenerator
     from ...infrastructure.webui.active_task_manager import ActiveTaskManager
     from .comic_command_handler import ComicCommandHandler
@@ -60,6 +61,7 @@ class AnalysisCommandHandler:
     active_task_manager: ActiveTaskManager | None
     trace_store: TraceSQLiteStore | None
     message_sender: MessageSender | None
+    report_dispatcher: ReportDispatcher | None
     comic_handler: ComicCommandHandler | None
     plugin_data_dir: Path
     plugin_instance: PluginHostProtocol | None
@@ -78,6 +80,7 @@ class AnalysisCommandHandler:
         comic_handler: ComicCommandHandler | None = None,
         plugin_data_dir: Path | None = None,
         plugin_instance: PluginHostProtocol | None = None,
+        report_dispatcher: ReportDispatcher | None = None,
     ) -> None:
         self.config_manager = config_manager
         self.bot_manager = bot_manager
@@ -87,6 +90,7 @@ class AnalysisCommandHandler:
         self.active_task_manager = active_task_manager
         self.trace_store = trace_store
         self.message_sender = message_sender
+        self.report_dispatcher = report_dispatcher
         self.comic_handler = comic_handler
         self.plugin_data_dir = (
             plugin_data_dir or Path.cwd() / "data" / "plugin_data" / PLUGIN_NAME
@@ -299,7 +303,20 @@ class AnalysisCommandHandler:
         raw_adapter = result.get("adapter")
         adapter = cast("PlatformAdapterProtocol | None", raw_adapter)
 
-        if not adapter:
+        try:
+            delivery_mode = self.config_manager.get_report_delivery_mode()
+        except ValueError as exc:
+            result["analysis_success"] = True
+            result["report_sent"] = False
+            result["success"] = False
+            result["reason"] = "report_delivery_failed"
+            trace = TraceContext.current()
+            if trace and trace.status == "running":
+                trace.finish(status="failed", error_message=str(exc))
+            yield event.plain_result("❌ 总结投递配置无效，请检查插件的总结投递设置。")
+            return
+
+        if not adapter and delivery_mode == "source_group":
             logger.warning(f"群 {group_id} 未找到对应的平台适配器，无法发送报告")
             return
 
@@ -314,6 +331,32 @@ class AnalysisCommandHandler:
 
         output_format_list = self.config_manager.get_output_format()
         output_format = output_format_list[0] if output_format_list else "image"
+        if delivery_mode != "source_group":
+            sent = False
+            if self.report_dispatcher:
+                sent = await self.report_dispatcher.dispatch(
+                    group_id,
+                    analysis_result,
+                    platform_id,
+                    output_formats=[output_format],
+                )
+            else:
+                logger.error("手动总结投递失败：报告分发器未初始化")
+            result["analysis_success"] = True
+            result["report_sent"] = bool(sent)
+            if not sent:
+                result["success"] = False
+                result["reason"] = "report_delivery_failed"
+                trace = TraceContext.current()
+                if trace and trace.status == "running":
+                    trace.finish(status="failed", error_message="总结投递失败")
+                yield event.plain_result(
+                    "❌ 总结投递失败，请检查目标群或 Server酱机器人配置；总结未发送到原群。"
+                )
+            return
+
+        if not adapter:
+            return
         is_qq_official = adapter.get_platform_name() in {
             "qq_official",
             "qq_official_webhook",
