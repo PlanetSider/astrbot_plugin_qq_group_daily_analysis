@@ -855,6 +855,7 @@ class DailyAnalysisExecutionResult(TypedDict, total=False):
     resumed_from: str
     analysis_success: bool
     report_sent: bool
+    report_delivery_skipped: bool
 
 
 class ComicAnalysisExecutionResult(TypedDict, total=False):

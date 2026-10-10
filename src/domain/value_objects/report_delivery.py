@@ -6,8 +6,41 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 ReportDeliveryMode = Literal[
-    "source_group", "forward_group", "serverchan", "forward_group_and_serverchan"
+    "disabled",
+    "source_group",
+    "forward_group",
+    "serverchan",
+    "forward_group_and_serverchan",
+    "qq_official",
+    "forward_group_and_qq_official",
+    "qq_official_and_serverchan",
+    "forward_group_and_qq_official_and_serverchan",
 ]
+
+FORWARD_GROUP_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
+    {
+        "forward_group",
+        "forward_group_and_serverchan",
+        "forward_group_and_qq_official",
+        "forward_group_and_qq_official_and_serverchan",
+    }
+)
+QQ_OFFICIAL_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
+    {
+        "qq_official",
+        "forward_group_and_qq_official",
+        "qq_official_and_serverchan",
+        "forward_group_and_qq_official_and_serverchan",
+    }
+)
+SERVERCHAN_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
+    {
+        "serverchan",
+        "forward_group_and_serverchan",
+        "qq_official_and_serverchan",
+        "forward_group_and_qq_official_and_serverchan",
+    }
+)
 
 
 @dataclass(frozen=True)
