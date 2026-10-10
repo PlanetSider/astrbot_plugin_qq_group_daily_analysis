@@ -119,6 +119,10 @@ def test_traditional_analysis_is_failed_when_report_delivery_fails():
         scheduler.report_dispatcher = SimpleNamespace(
             dispatch=AsyncMock(side_effect=failing_dispatch)
         )
+        scheduler.config_manager = SimpleNamespace(
+            get_analysis_days=Mock(return_value=1),
+            get_report_delivery_mode=Mock(return_value="source_group"),
+        )
         scheduler.plugin_instance = SimpleNamespace(
             comic_command_handler=mock_comic_handler
         )
@@ -185,7 +189,8 @@ def test_incremental_final_report_requires_successful_delivery():
             dispatch=AsyncMock(side_effect=failing_dispatch)
         )
         scheduler.config_manager = SimpleNamespace(
-            get_analysis_days=Mock(return_value=1)
+            get_analysis_days=Mock(return_value=1),
+            get_report_delivery_mode=Mock(return_value="source_group"),
         )
         scheduler.plugin_instance = SimpleNamespace(
             comic_command_handler=mock_comic_handler

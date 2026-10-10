@@ -1,6 +1,7 @@
 """漫画唯一投递目标、实时配置和禁止回发原群的回归测试。"""
 
 import asyncio
+from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -9,6 +10,7 @@ import pytest
 
 from src.application.handlers.comic_command_handler import ComicCommandHandler
 from src.infrastructure.config.config_manager import ConfigManager
+from src.infrastructure.platform.bot_manager import BotManager
 from src.shared.trace_context import _current_trace
 
 SOURCE_GROUP = "123456"
@@ -373,7 +375,7 @@ async def test_configuration_changed_during_send_skips_album_backup(comic_rig, c
 @pytest.mark.parametrize(
     ("settings", "expected"),
     [
-        ({"destination": "serverchan"}, "Server酱机器人"),
+        ({"destination": "serverchan"}, "未启用群目标"),
         ({"destination": "forward_group", "forward_target": ""}, "投递目标无效"),
     ],
 )
@@ -589,3 +591,201 @@ async def test_dual_delivery_does_not_return_comic_to_source_for_invalid_target(
     rig.comic_service.generate_comic.assert_not_awaited()
     rig.source.send_image.assert_not_awaited()
     rig.target.send_image.assert_not_awaited()
+
+
+@pytest.fixture
+def official_comic_rig(comic_rig):
+    """为漫画回归接入真实实例选择器和不具备群相册能力的官方实例。"""
+    rig = comic_rig
+    official = SimpleNamespace(
+        platform_id="official-main",
+        get_platform_name=Mock(return_value="qq_official"),
+        send_image=AsyncMock(return_value=True),
+    )
+    rig.source.get_platform_name = Mock(return_value="onebot")
+    rig.target.get_platform_name = Mock(return_value="onebot")
+    rig.adapters["official-main"] = official
+    manager = BotManager(rig.config)
+    manager._adapters = rig.adapters
+    rig.handler.bot_manager = manager
+    rig.official = official
+    rig.settings.update(
+        destination="independent",
+        stop_source_group=False,
+        forward_group_enabled=False,
+        qq_official_enabled=False,
+        serverchan_enabled=False,
+        qq_official_target="official-main:GroupMessage:official-group",
+    )
+    return rig
+
+
+@pytest.mark.parametrize(
+    ("stop_source", "forward", "official", "serverchan"),
+    list(product([False, True], repeat=4)),
+)
+@pytest.mark.parametrize("require_auto", [False, True])
+@pytest.mark.asyncio
+async def test_comic_three_channels_and_stop_source_use_one_destination(
+    official_comic_rig, stop_source, forward, official, serverchan, require_auto
+):
+    rig = official_comic_rig
+    rig.settings.update(
+        stop_source_group=stop_source,
+        forward_group_enabled=forward,
+        qq_official_enabled=official,
+        serverchan_enabled=serverchan,
+    )
+    destinations = [
+        (rig.source, SOURCE_GROUP),
+        (rig.target, TARGET_GROUP),
+        (rig.official, "official-group"),
+    ]
+    winner = (
+        rig.target
+        if forward
+        else rig.official
+        if official
+        else None
+        if stop_source or serverchan
+        else rig.source
+    )
+    status = rig.handler.try_trigger_comic_generation(
+        SOURCE_GROUP,
+        SOURCE_PLATFORM,
+        {"topics": TOPICS},
+        require_auto_enabled=require_auto,
+    )
+    if winner is None:
+        assert status == "delivery_disabled"
+        assert not rig.handler._background_tasks
+        rig.comic_service.generate_comic.assert_not_awaited()
+    else:
+        assert status == "started"
+        await asyncio.gather(*tuple(rig.handler._background_tasks))
+        rig.comic_service.generate_comic.assert_awaited_once_with(
+            TOPICS, SOURCE_GROUP, SOURCE_UMO
+        )
+    for adapter, group in destinations:
+        if adapter is winner:
+            adapter.send_image.assert_awaited_once()
+            assert adapter.send_image.await_args.args[0] == group
+            artifact = Path(adapter.send_image.await_args.args[1])
+            assert artifact.is_file()
+            assert artifact.name.startswith(f"comic_{SOURCE_GROUP}_")
+        else:
+            adapter.send_image.assert_not_awaited()
+    for adapter, group in destinations[:2]:
+        if adapter is winner:
+            adapter.upload_group_album.assert_awaited_once()
+            assert adapter.upload_group_album.await_args.args[0] == group
+        else:
+            adapter.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "",
+        "missing:GroupMessage:official-group",
+        f"{TARGET_PLATFORM}:GroupMessage:official-group",
+        "qq_official:GroupMessage:official-group",
+    ],
+)
+@pytest.mark.asyncio
+async def test_unavailable_official_comic_never_returns_to_source(
+    official_comic_rig, target
+):
+    rig = official_comic_rig
+    rig.settings.update(qq_official_enabled=True, qq_official_target=target)
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP, SOURCE_PLATFORM, {"topics": TOPICS}
+        )
+        == "delivery_unavailable"
+    )
+    rig.comic_service.generate_comic.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.official.send_image.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", ["rejected", "exception"])
+@pytest.mark.asyncio
+async def test_official_comic_send_failure_never_returns_to_source(
+    official_comic_rig, failure
+):
+    rig = official_comic_rig
+    rig.settings["qq_official_enabled"] = True
+    rig.official.send_image.return_value = False
+    if failure == "exception":
+        rig.official.send_image.side_effect = RuntimeError("平台拒绝发送")
+    await generate(rig)
+    rig.official.send_image.assert_awaited_once()
+    rig.source.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("official", [False, True])
+@pytest.mark.parametrize("phase", ["queued", "drawing"])
+@pytest.mark.asyncio
+async def test_stop_source_cancels_comic_before_generation_or_sending(
+    official_comic_rig, official, phase
+):
+    rig = official_comic_rig
+    rig.settings["qq_official_enabled"] = official
+
+    def disable_delivery():
+        rig.settings.update(stop_source_group=True, qq_official_enabled=False)
+
+    if phase == "queued":
+        await rig.handler._comic_semaphore.acquire()
+        try:
+            assert (
+                rig.handler.try_trigger_comic_generation(
+                    SOURCE_GROUP, SOURCE_PLATFORM, {"topics": TOPICS}
+                )
+                == "started"
+            )
+            disable_delivery()
+        finally:
+            rig.handler._comic_semaphore.release()
+        await asyncio.gather(*tuple(rig.handler._background_tasks))
+        rig.comic_service.generate_comic.assert_not_awaited()
+    else:
+
+        async def draw(*_args):
+            disable_delivery()
+            return PNG_BYTES, None
+
+        rig.comic_service.generate_comic.side_effect = draw
+        await generate(rig)
+        rig.comic_service.generate_comic.assert_awaited_once()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.official.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stop_source_skips_manual_comic_before_topic_analysis(comic_rig):
+    rig = comic_rig
+    rig.settings.update(
+        destination="independent",
+        stop_source_group=True,
+        forward_group_enabled=False,
+        qq_official_enabled=False,
+        serverchan_enabled=False,
+    )
+    messages = [
+        message async for message in rig.handler.handle_group_comic(make_event())
+    ]
+    assert any("未启用群目标" in message for message in messages)
+    rig.analysis_service.execute_comic_topic_analysis.assert_not_awaited()
+    rig.comic_service.generate_comic.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    assert not rig.handler._background_tasks
