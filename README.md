@@ -2,8 +2,8 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.7-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)
-[![AstrBot](https://img.shields.io/badge/AstrBot-插件市场入口-ff69b4?style=for-the-badge)](https://cloud.astrbot.app/plugin/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.1-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-AI_知识库-1877F2?style=for-the-badge&logo=data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAgACADASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAAYHCP/EACIQAAEDBAIDAQEAAAAAAAAAAAECAwQABQYHERIxMkFxCP/EABcBAQEBAQAAAAAAAAAAAAAAAAABAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwDkylK2r+f9b64zbDckn5fmaLJdYZ6Q2lzWY6UApBS6oOe4Kz148D9IroyxWlW+w9UZ5gFot91yqyiFEnqLbLiJLboC+CequhPBIBI8gj78qIqhW1aA2LrTC8NySDmWGt3u6yz3hOrgtSErSEgJZUV+gCx258H9AFYrSoLjYm2M72BaLfacqvKJkSAouNNtxm2QV8EdldAOSASkeAB8+1D0pVH/2Q==)](https://deepwiki.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)
@@ -27,6 +27,10 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 <img src="https://count.getloli.com/@astrbot-qq-group-daily-analysis?name=astrbot-qq-group-daily-analysis&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </div>
+
+本自用版作者为 **PlanetSider**，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。
+
+在 AstrBot 的插件源管理中添加 [自用插件源地址](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)，刷新后选择作者为 `PlanetSider` 的“群分析总结插件自用版”。该源的安装包指向 `feature/serverchan-summary-routing` 分支。
 
 - [常见问题 (FAQ)](#常见问题-FAQ)
 - [效果](#效果)
@@ -175,22 +179,27 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 ## 总结投递与 Server酱机器人
 
-在插件配置页找到 **总结投递**，通过 `report_delivery.destination` 选择总结的唯一发送目标：
+在插件配置页找到 **总结投递**，分别设置“转发到指定群”和“推送到 Server酱机器人”。两个开关互不排斥，可单独开启，也可同时开启：
 
-| 选项 | 行为 |
-| --- | --- |
-| `source_group`（默认） | 发送到被分析的原群，升级后保持原有行为。 |
-| `forward_group` | 仅发送到 `forward_target` 指定的群，停止向原群发送总结。支持图片、文本和 HTML；图片的群文件、群相册备份也使用目标群。 |
-| `serverchan` | 仅通过 Server酱³ Bot 的 `sendMessage` 接口发送文本总结，停止向原群发送总结。该模式不受 `basic.output_format` 的图片或 HTML 设置限制。 |
+| 指定群 `forward_group_enabled` | Server酱 `serverchan_enabled` | 总结投递 | 漫画投递 |
+| --- | --- | --- | --- |
+| 关闭（默认） | 关闭（默认） | 原群 | 原群 |
+| 开启 | 关闭 | 仅指定群，停止发送原群 | 仅指定群 |
+| 关闭 | 开启 | 仅 Server酱文本总结，停止发送原群 | 跳过漫画 |
+| 开启 | 开启 | 指定群 + Server酱文本总结，停止发送原群 | 仅指定群 |
+
+指定群继续支持图片、文本和 HTML；图片的群文件、群相册备份也只使用目标群。Server酱独立发送文本总结，不受 `basic.output_format` 的图片或 HTML 设置限制。升级时，旧版 `report_delivery.destination` 的原群、指定群或 Server酱设置会自动转换成对应开关，原有目标群与机器人凭据保留；迁移完成后可以自由修改两个开关。
 
 这些配置适用于手动 `/群分析`、定时报告、增量最终报告、立即增量报告，以及控制台或 LLM 工具请求发送的报告。手动报告继续只使用首个输出格式，定时报告继续依次发送所选格式。报告的分析数据、头像、HTML 命名和历史归档仍属于原群。
 
+两路同时开启时，插件分别尝试投递；一路配置错误、平台离线、超时或发送失败不会阻断另一路。每路结果会单独记录，至少一路发送成功即视为已送达，部分失败会记录警告；不会自动重试整份报告，避免已成功的通道重复收到总结。两路都失败时记录投递失败，**不会回发原群**。
+
 ### 将群 A 的总结转发到群 B
 
-1. 将“总结发送到”设为“指定群（停止发送原群）”。
+1. 开启“转发到指定群（停止发送原群）”。
 2. 在“转发目标群”填写群 B 的群号，或在群 B 执行 `/sid`，粘贴完整会话 ID（推荐）。
 3. 纯群号沿用群 A 的平台实例；完整会话 ID 可指定另一个已连接的平台，例如 `onebot-main:GroupMessage:654321`。QQ 官方使用 `group_openid`，Telegram 可使用包含话题的群 ID。
-4. 确保机器人在目标群中且有发言权限，保存配置后生效。
+4. 确保机器人在目标群中且有发言权限，保存配置后生效。需要同时推送 Server酱时，另行开启 Server酱开关并填写凭据。
 
 目标不得是原群，也不能填写私聊会话 ID。目标缺失、平台离线、图片或文件发送失败时，文本回退也只发目标群；最终投递失败会被记录，**不会回发原群**。手动命令的进度和错误提示仍可能出现在原群，它们不包含总结正文。
 
@@ -199,12 +208,12 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 1. 按照 [Server酱官方 Bot 配置指南](https://sc3.ft07.com/bot)，安装 Server酱³ **1.1.0+** 客户端，使用 SendKey 登录。
 2. 在客户端机器人管理中创建 Bot，左滑该 Bot 选择编辑，复制 **Bot Token**。
 3. 在 Server酱³ 官网的 SendKey 页面获取你的 **UID**。
-4. 在插件“总结投递”中选择“Server酱机器人”，填写 `serverchan_bot_token` 和 `serverchan_chat_id`（UID，正整数）。Bot Token 与用于登录客户端的 SendKey 是不同凭据。
+4. 在插件“总结投递”中开启“推送到 Server酱机器人”，填写 `serverchan_bot_token` 和 `serverchan_chat_id`（UID，正整数）。Bot Token 与用于登录客户端的 SendKey 是不同凭据。
 5. 默认会推送到消息通道。若只希望保存到 Server酱³ 而不触发通道通知，开启 `serverchan_silent`。
 
-插件使用官方地址 `https://bot-go.apijia.cn/bot<TOKEN>/sendMessage`，请求包含 `chat_id`、`text`、`parse_mode=markdown` 和 `silent`。目前按官方已公开的接口发送文本总结，不调用未文档化的图片或文件接口。只有 HTTP 成功且响应明确为 `ok: true` 才判定投递成功；超时或接口拒绝会记录失败，不会回发原群或自动重试造成重复推送。令牌不会写入推送日志。
+插件使用官方地址 `https://bot-go.apijia.cn/bot<TOKEN>/sendMessage`，请求包含 `chat_id`、`text`、`parse_mode=markdown` 和 `silent`。目前按官方已公开的接口发送文本总结，不调用未文档化的图片或文件接口。只有 HTTP 成功且响应明确为 `ok: true` 才判定该通道投递成功；超时或接口拒绝会记录失败，不会回发原群或自动重试造成重复推送。令牌不会写入推送日志。
 
-群漫画也遵循“总结投递”的唯一目标，适用于手动 `/群漫画` 和群分析后的自动联动漫画：`source_group` 保持向原群发送；`forward_group` 只向指定群发送漫画及相册备份，失败不会回发原群；`serverchan` 仅发送文本总结，直接跳过漫画，不会向原群发送图片。漫画总开关、自动联动开关、群名单和去重仍按源群生效，话题提取及本地漫画文件也仍归属源群。排队和绘图期间修改投递配置时，任务在生成前与发送前重新校验目标；切换到 Server酱或无效目标会取消群漫画投递，已经发出的消息无法撤回。
+群漫画适用于手动 `/群漫画` 和群分析后的自动联动漫画：两个开关都关闭时保持向原群发送；开启指定群时只向指定群发送漫画及相册备份，即使同时开启 Server酱也不影响群漫画；只开启 Server酱时跳过漫画，不会向原群发送图片。漫画总开关、自动联动开关、群名单和去重仍按源群生效，话题提取及本地漫画文件也仍归属源群。排队和绘图期间修改投递配置时，任务在生成前与发送前重新校验群目标；切换为仅 Server酱或无效群目标会取消群漫画投递，已经发出的消息无法撤回。
 
 ## 每日群漫画配置
 

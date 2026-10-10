@@ -84,7 +84,7 @@ class ReportDispatcher:
         *,
         output_formats: list[str] | None = None,
     ) -> bool:
-        """按投递配置分发报告，并返回是否实际发送成功。
+        """按独立开关分发报告，各通道失败互不阻断。
 
         Args:
             group_id: 被分析的源群 ID，用于生成报告及历史归档。
@@ -93,71 +93,116 @@ class ReportDispatcher:
             output_formats: 本次使用的格式；手动入口仅传首个格式。
 
         Returns:
-            至少一种格式发送成功时返回 True。
+            至少一个已启用通道发送成功时返回 True。
         """
         trace_id = TraceContext.get()
         trace = TraceContext.current()
         try:
             mode = self.config_manager.get_report_delivery_mode()
-            if trace:
-                trace.metadata["report_destination"] = mode
-            if mode == "serverchan":
-                bot_config = self.config_manager.get_serverchan_bot_config()
-                if not self.report_generator:
-                    logger.error("[分发器] 报告生成器未初始化，无法推送 Server酱总结")
-                    return False
-                text = self.report_generator.generate_text_report(analysis_result)
-                with (
-                    trace.span(
-                        AnalysisStage.DISPATCH_REPORT,
-                        {
-                            "platform": "serverchan",
-                            "group_id": group_id,
-                            "target_chat_id": str(bot_config.chat_id),
-                            "formats": ["text"],
-                            "format": "text",
-                        },
-                    )
-                    if trace
-                    else nullcontext()
-                ) as dispatch_span:
-                    sent = await self.serverchan_sender.send_summary(
-                        bot_config,
-                        f"📊 每日群聊分析报告（来源群：{group_id}）：\n\n{text}",
-                    )
-                    if dispatch_span:
-                        dispatch_span.setdefault("payload", {})["success"] = sent
-                    return sent
-            target = (
-                self.config_manager.get_forward_report_target(group_id, platform_id)
-                if mode == "forward_group"
-                else GroupReportTarget(group_id, platform_id)
-            )
-            if mode == "forward_group" and target.group_id == group_id:
-                bot_manager = self.message_sender.bot_manager
-                source_adapter = bot_manager.get_adapter(platform_id)
-                source_id = (
-                    bot_manager.get_adapter_platform_id(source_adapter)
-                    if source_adapter
-                    else ""
-                )
-                target_adapter = bot_manager.get_adapter(target.platform_id)
-                target_id = (
-                    bot_manager.get_adapter_platform_id(target_adapter)
-                    if target_adapter
-                    else ""
-                )
-                if source_adapter is not None and (
-                    source_adapter is target_adapter
-                    or (source_id and source_id.casefold() == target_id.casefold())
-                ):
-                    raise ValueError("转发目标不能是原群，请填写另外一个群")
-        except Exception as exc:
-            # 外部机器人请求含令牌，异常只记录类型；配置错误本身不包含凭据。
-            detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-            logger.error(f"[{trace_id}] 总结投递失败：{detail}")
+        except ValueError as exc:
+            logger.error(f"[{trace_id}] 总结投递配置无效：{exc}")
             return False
+        if trace:
+            trace.metadata["report_destination"] = mode
 
+        forward_enabled = mode in {"forward_group", "forward_group_and_serverchan"}
+        serverchan_enabled = mode in {"serverchan", "forward_group_and_serverchan"}
+        channel_results: dict[str, bool] = {}
+        if mode != "serverchan":
+            try:
+                target = (
+                    self.config_manager.get_forward_report_target(group_id, platform_id)
+                    if forward_enabled
+                    else GroupReportTarget(group_id, platform_id)
+                )
+                if forward_enabled and target.group_id == group_id:
+                    bot_manager = self.message_sender.bot_manager
+                    source_adapter = bot_manager.get_adapter(platform_id)
+                    target_adapter = bot_manager.get_adapter(target.platform_id)
+                    source_id = (
+                        bot_manager.get_adapter_platform_id(source_adapter)
+                        if source_adapter
+                        else ""
+                    )
+                    target_id = (
+                        bot_manager.get_adapter_platform_id(target_adapter)
+                        if target_adapter
+                        else ""
+                    )
+                    if source_adapter is not None and (
+                        source_adapter is target_adapter
+                        or (source_id and source_id.casefold() == target_id.casefold())
+                    ):
+                        raise ValueError("转发目标不能是原群，请填写另外一个群")
+                channel_results["group"] = await self._dispatch_group_reports(
+                    group_id, analysis_result, platform_id, target, output_formats
+                )
+            except Exception as exc:
+                detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                logger.error(f"[{trace_id}] 群总结投递失败：{detail}")
+                channel_results["group"] = False
+
+        if serverchan_enabled:
+            try:
+                channel_results["serverchan"] = await self._dispatch_serverchan(
+                    group_id, analysis_result
+                )
+            except Exception as exc:
+                # 机器人请求地址包含令牌，禁止输出异常正文及堆栈。
+                logger.error(f"[{trace_id}] Server酱总结投递异常：{type(exc).__name__}")
+                channel_results["serverchan"] = False
+
+        if trace:
+            trace.metadata["report_delivery_results"] = channel_results
+        sent_any = any(channel_results.values())
+        if sent_any and not all(channel_results.values()):
+            logger.warning(
+                f"[{trace_id}] 总结部分投递成功，各通道结果：{channel_results}"
+            )
+        return sent_any
+
+    async def _dispatch_serverchan(
+        self, group_id: str, analysis_result: AnalysisResultPayload
+    ) -> bool:
+        """独立生成并推送文本总结，不依赖群平台适配器。"""
+        bot_config = self.config_manager.get_serverchan_bot_config()
+        if not self.report_generator:
+            logger.error("[分发器] 报告生成器未初始化，无法推送 Server酱总结")
+            return False
+        text = self.report_generator.generate_text_report(analysis_result)
+        trace = TraceContext.current()
+        with (
+            trace.span(
+                AnalysisStage.DISPATCH_REPORT,
+                {
+                    "platform": "serverchan",
+                    "group_id": group_id,
+                    "target_chat_id": str(bot_config.chat_id),
+                    "formats": ["text"],
+                    "format": "text",
+                },
+            )
+            if trace
+            else nullcontext()
+        ) as dispatch_span:
+            sent = await self.serverchan_sender.send_summary(
+                bot_config,
+                f"📊 每日群聊分析报告（来源群：{group_id}）：\n\n{text}",
+            )
+            if dispatch_span:
+                dispatch_span.setdefault("payload", {})["success"] = sent
+            return sent
+
+    async def _dispatch_group_reports(
+        self,
+        group_id: str,
+        analysis_result: AnalysisResultPayload,
+        platform_id: str | None,
+        target: GroupReportTarget,
+        output_formats: list[str] | None,
+    ) -> bool:
+        """按源群生成报告，各格式及文本回退只使用已校验的群目标。"""
+        trace_id = TraceContext.get()
         if output_formats is None:
             output_formats = self.config_manager.get_output_format()
         if isinstance(output_formats, str):

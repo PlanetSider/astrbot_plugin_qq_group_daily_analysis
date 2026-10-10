@@ -496,3 +496,96 @@ async def test_comic_deduplication_remains_keyed_by_source_group(comic_rig):
     rig.target.send_image.assert_awaited_once()
     rig.source.send_image.assert_not_awaited()
     assert not rig.handler._comic_group_tasks
+
+
+@pytest.mark.parametrize("forward", [False, True])
+@pytest.mark.parametrize("serverchan", [False, True])
+@pytest.mark.parametrize("require_auto", [False, True])
+@pytest.mark.asyncio
+async def test_comic_independent_switches_keep_the_correct_group_destination(
+    comic_rig, forward, serverchan, require_auto
+):
+    rig = comic_rig
+    rig.settings.update(
+        destination="independent",
+        forward_group_enabled=forward,
+        serverchan_enabled=serverchan,
+    )
+    status = rig.handler.try_trigger_comic_generation(
+        SOURCE_GROUP,
+        SOURCE_PLATFORM,
+        {"topics": TOPICS},
+        require_auto_enabled=require_auto,
+    )
+    if serverchan and not forward:
+        assert status == "delivery_disabled"
+        rig.comic_service.generate_comic.assert_not_awaited()
+        rig.source.send_image.assert_not_awaited()
+        rig.target.send_image.assert_not_awaited()
+        assert not rig.handler._background_tasks
+        return
+
+    assert status == "started"
+    await asyncio.gather(*tuple(rig.handler._background_tasks))
+    adapter = rig.target if forward else rig.source
+    expected_group = TARGET_GROUP if forward else SOURCE_GROUP
+    adapter.send_image.assert_awaited_once()
+    assert adapter.send_image.await_args.args[0] == expected_group
+    adapter.upload_group_album.assert_awaited_once()
+    assert adapter.upload_group_album.await_args.args[0] == expected_group
+    other_adapter = rig.source if forward else rig.target
+    other_adapter.send_image.assert_not_awaited()
+    other_adapter.upload_group_album.assert_not_awaited()
+    rig.comic_service.generate_comic.assert_awaited_once_with(
+        TOPICS, SOURCE_GROUP, SOURCE_UMO
+    )
+
+
+@pytest.mark.parametrize("disable", ["forward_group_enabled", "serverchan_enabled"])
+@pytest.mark.asyncio
+async def test_dual_delivery_comic_rechecks_group_switch_after_drawing(
+    comic_rig, disable
+):
+    rig = comic_rig
+    rig.settings.update(
+        destination="independent", forward_group_enabled=True, serverchan_enabled=True
+    )
+
+    async def draw(*_args):
+        rig.settings[disable] = False
+        return PNG_BYTES, None
+
+    rig.comic_service.generate_comic.side_effect = draw
+    await generate(rig)
+
+    if disable == "forward_group_enabled":
+        rig.target.send_image.assert_not_awaited()
+        rig.target.upload_group_album.assert_not_awaited()
+    else:
+        rig.target.send_image.assert_awaited_once()
+        assert rig.target.send_image.await_args.args[0] == TARGET_GROUP
+    rig.source.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("invalid_target", ["", SOURCE_GROUP])
+@pytest.mark.asyncio
+async def test_dual_delivery_does_not_return_comic_to_source_for_invalid_target(
+    comic_rig, invalid_target
+):
+    rig = comic_rig
+    rig.settings.update(
+        destination="independent",
+        forward_group_enabled=True,
+        serverchan_enabled=True,
+        forward_target=invalid_target,
+    )
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP, SOURCE_PLATFORM, {"topics": TOPICS}
+        )
+        == "delivery_unavailable"
+    )
+    rig.comic_service.generate_comic.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
