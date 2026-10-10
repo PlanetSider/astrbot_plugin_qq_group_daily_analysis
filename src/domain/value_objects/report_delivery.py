@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-ReportDeliveryMode = Literal["source_group", "forward_group", "serverchan"]
+ReportDeliveryMode = Literal[
+    "source_group", "forward_group", "serverchan", "forward_group_and_serverchan"
+]
 
 
 @dataclass(frozen=True)
