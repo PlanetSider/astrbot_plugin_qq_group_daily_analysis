@@ -545,15 +545,21 @@ class AutoScheduler:
                         f"群 {group_id} 触发定时报告漫画失败: {exc}", exc_info=True
                     )
 
-            report_sent = await self.report_dispatcher.dispatch(
+            delivery_disabled = (
+                self.config_manager.get_report_delivery_mode() == "disabled"
+            )
+            delivery_completed = await self.report_dispatcher.dispatch(
                 group_id,
                 analysis_result,
                 dispatch_platform_id,
             )
 
             result["analysis_success"] = True
-            result["report_sent"] = bool(report_sent)
-            if not report_sent:
+            result["report_sent"] = bool(delivery_completed) and not delivery_disabled
+            result["report_delivery_skipped"] = delivery_disabled
+            if delivery_disabled:
+                result["reason"] = "report_delivery_disabled"
+            if not delivery_completed:
                 if trace and trace.status == "running":
                     trace.finish(
                         status="failed", error_message="Report delivery failed"
@@ -565,7 +571,10 @@ class AutoScheduler:
 
             if trace and trace.status == "running":
                 trace.finish(status="succeeded")
-            logger.info(f"群 {group_id} 自动分析及报告发送成功")
+            if delivery_disabled:
+                logger.info(f"群 {group_id} 自动分析完成，按总结投递配置跳过发送")
+            else:
+                logger.info(f"群 {group_id} 自动分析及报告发送成功")
             return result
 
         except DuplicateGroupTaskError:
@@ -1075,15 +1084,21 @@ class AutoScheduler:
                         exc_info=True,
                     )
 
-            report_sent = await self.report_dispatcher.dispatch(
+            delivery_disabled = (
+                self.config_manager.get_report_delivery_mode() == "disabled"
+            )
+            delivery_completed = await self.report_dispatcher.dispatch(
                 group_id,
                 analysis_result,
                 dispatch_platform_id,
             )
 
             result["analysis_success"] = True
-            result["report_sent"] = bool(report_sent)
-            if not report_sent:
+            result["report_sent"] = bool(delivery_completed) and not delivery_disabled
+            result["report_delivery_skipped"] = delivery_disabled
+            if delivery_disabled:
+                result["reason"] = "report_delivery_disabled"
+            if not delivery_completed:
                 if trace and trace.status == "running":
                     trace.finish(
                         status="failed", error_message="Report delivery failed"
@@ -1113,7 +1128,10 @@ class AutoScheduler:
 
             if trace and trace.status == "running":
                 trace.finish(status="succeeded")
-            logger.info(f"群 {group_id} 增量最终报告发送成功")
+            if delivery_disabled:
+                logger.info(f"群 {group_id} 增量最终报告分析完成，已按配置跳过投递")
+            else:
+                logger.info(f"群 {group_id} 增量最终报告发送成功")
             return result
 
         except DuplicateGroupTaskError:
