@@ -1,0 +1,24 @@
+{
+  "$meta": {
+    "schema_version": 1,
+    "name": "PlanetSider 自用插件源"
+  },
+  "SXP-Simon/astrbot_plugin_qq_group_daily_analysis": {
+    "author": "SXP-Simon",
+    "name": "astrbot_plugin_qq_group_daily_analysis",
+    "version": "v5.7.8.1",
+    "repo": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis",
+    "download_url": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/archive/refs/heads/feature/serverchan-summary-routing.zip",
+    "display_name": "群分析总结插件自用版",
+    "desc": "群日常分析总结插件，支持总结投递到原群、指定群或 Server酱机器人；漫画遵循群投递目标，Server酱模式仅推送文本总结。",
+    "astrbot_version": ">=4.24.1",
+    "support_platforms": [
+      "aiocqhttp",
+      "discord",
+      "telegram",
+      "qq_official",
+      "qq_official_webhook",
+      "satori"
+    ]
+  }
+}
