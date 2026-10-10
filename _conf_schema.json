@@ -203,6 +203,49 @@
             }
         }
     },
+    "report_delivery": {
+        "description": "总结投递",
+        "type": "object",
+        "hint": "设置群总结的唯一发送目标，适用于手动、定时、增量及控制台发送。指定群或 Server酱模式不会向原群发送总结，投递失败也不会回发原群。独立的群漫画仍由漫画设置控制。",
+        "items": {
+            "destination": {
+                "type": "string",
+                "description": "总结发送到",
+                "options": ["source_group", "forward_group", "serverchan"],
+                "labels": ["原群", "指定群（停止发送原群）", "Server酱机器人（停止发送原群）"],
+                "default": "source_group",
+                "hint": "默认发送原群。选择指定群会保留原输出格式；Server酱机器人使用官方 sendMessage 接口发送文本总结，不受图片/HTML 输出格式限制。"
+            },
+            "forward_target": {
+                "type": "string",
+                "description": "转发目标群",
+                "default": "",
+                "condition": {"destination": "forward_group"},
+                "hint": "填写另外一个群的群号（沿用源群平台），或完整会话 ID，例如 onebot-main:GroupMessage:123456。建议在目标群执行 /sid 获取。QQ 官方请使用 group_openid。机器人必须能够向目标群发消息；目标无效或发送失败时不会回发原群。"
+            },
+            "serverchan_bot_token": {
+                "type": "string",
+                "description": "Server酱机器人 Bot Token",
+                "default": "",
+                "condition": {"destination": "serverchan"},
+                "hint": "在 Server酱³ 1.1.0+ 客户端的机器人管理中创建 Bot，再左滑编辑获取 Bot Token。这里填写 Bot Token；SendKey 用于客户端登录，不能填在这里。配置指南：https://sc3.ft07.com/bot"
+            },
+            "serverchan_chat_id": {
+                "type": "string",
+                "description": "Server酱接收用户 UID",
+                "default": "",
+                "condition": {"destination": "serverchan"},
+                "hint": "填写 Server酱³ 官网 SendKey 页面显示的 UID，必须是正整数；它是 Bot API 的 chat_id。"
+            },
+            "serverchan_silent": {
+                "type": "bool",
+                "description": "Server酱静默推送",
+                "default": false,
+                "condition": {"destination": "serverchan"},
+                "hint": "默认关闭，会推送到消息通道。开启后仅在 Server酱³ 内保存消息，不推送到通知通道。"
+            }
+        }
+    },
     "qq_official": {
         "description": "QQ 官方机器人",
         "type": "object",

@@ -14,6 +14,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api.star import StarTools
 
+from ...domain.value_objects.report_delivery import (
+    GroupReportTarget,
+    ServerChanBotConfig,
+)
 from ...shared.constants import DEFAULT_ATRI_ASSETS_CDN_URL, PLUGIN_NAME
 from ...utils.logger import logger
 from .config_migrator import ConfigMigrator
@@ -23,6 +27,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from astrbot.api import AstrBotConfig
+
+    from ...domain.value_objects.report_delivery import ReportDeliveryMode
 
 
 class ConfigManager:
@@ -291,6 +297,96 @@ class ConfigManager:
         """获取输出格式"""
         val = self._get_group("basic").get("output_format", ["image"])
         return val if isinstance(val, list) else [val]
+
+    def get_report_delivery_mode(self) -> ReportDeliveryMode:
+        """获取总结投递方式，旧配置默认发送原群。
+
+        Returns:
+            原群、指定群或 Server酱机器人投递模式。
+
+        Raises:
+            ValueError: 已配置的投递方式无效。
+        """
+        mode: object = self._get_group("report_delivery").get(
+            "destination", "source_group"
+        )
+        if mode == "source_group":
+            return "source_group"
+        if mode == "forward_group":
+            return "forward_group"
+        if mode == "serverchan":
+            return "serverchan"
+        raise ValueError("总结投递方式无效，请检查总结投递配置")
+
+    def get_forward_report_target(
+        self, source_group_id: str, source_platform_id: str | None
+    ) -> GroupReportTarget:
+        """解析指定群目标，纯群号沿用源平台，完整会话 ID 指定平台。
+
+        Args:
+            source_group_id: 被分析的源群 ID。
+            source_platform_id: 源群所属平台实例 ID。
+
+        Returns:
+            校验后的目标群与平台实例。
+
+        Raises:
+            ValueError: 目标为空、会话格式无效或目标等于源群。
+        """
+        raw_target: object = self._get_group("report_delivery").get(
+            "forward_target", ""
+        )
+        if not isinstance(raw_target, str) or not raw_target.strip():
+            raise ValueError("转发目标群不能为空")
+        group_id = raw_target.strip()
+        platform_id = source_platform_id
+        if ":" in group_id:
+            parts = group_id.split(":", 2)
+            if (
+                len(parts) != 3
+                or parts[1] != "GroupMessage"
+                or not parts[0].strip()
+                or not parts[2].strip()
+            ):
+                raise ValueError("转发目标必须是群号或 平台ID:GroupMessage:群ID")
+            platform_id, group_id = parts[0].strip(), parts[2].strip()
+        if group_id == source_group_id and (
+            (platform_id or "").strip().casefold()
+            == (source_platform_id or "").strip().casefold()
+        ):
+            raise ValueError("转发目标不能是原群，请填写另外一个群")
+        return GroupReportTarget(group_id=group_id, platform_id=platform_id)
+
+    def get_serverchan_bot_config(self) -> ServerChanBotConfig:
+        """读取 Server酱³ Bot Token 与接收用户 UID。
+
+        Returns:
+            校验后的机器人凭据和推送配置。
+
+        Raises:
+            ValueError: 令牌为空、UID 无效或静默开关类型错误。
+        """
+        group = self._get_group("report_delivery")
+        token: object = group.get("serverchan_bot_token", "")
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("Server酱机器人 Bot Token 不能为空")
+        raw_uid: object = group.get("serverchan_chat_id", "")
+        if (
+            isinstance(raw_uid, str)
+            and raw_uid.strip().isascii()
+            and raw_uid.strip().isdigit()
+        ):
+            chat_id = int(raw_uid.strip())
+        elif isinstance(raw_uid, int) and not isinstance(raw_uid, bool):
+            chat_id = raw_uid
+        else:
+            raise ValueError("Server酱接收用户 UID 必须是正整数")
+        if chat_id <= 0:
+            raise ValueError("Server酱接收用户 UID 必须是正整数")
+        silent: object = group.get("serverchan_silent", False)
+        if not isinstance(silent, bool):
+            raise ValueError("Server酱静默推送必须是布尔值")
+        return ServerChanBotConfig(token=token.strip(), chat_id=chat_id, silent=silent)
 
     def get_qq_official_t2i_summary_dashboard_enabled(self) -> bool:
         """是否启用 QQ 官方 T2I 概览图。"""
