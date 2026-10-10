@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ...domain.value_objects.analysis_results import SummaryTopic
-from ...domain.value_objects.report_delivery import GroupReportTarget
+from ...domain.value_objects.report_delivery import (
+    FORWARD_GROUP_DELIVERY_MODES,
+    QQ_OFFICIAL_DELIVERY_MODES,
+    GroupReportTarget,
+)
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
@@ -187,7 +191,7 @@ class ComicCommandHandler:
                 return
             if delivery_target is None:
                 yield event.plain_result(
-                    "❌ 当前总结投递为 Server酱机器人，漫画不会发送到原群"
+                    "❌ 当前总结投递未启用群目标，已跳过漫画，不会发送到原群"
                 )
                 return
 
@@ -259,7 +263,7 @@ class ComicCommandHandler:
                 )
             elif status in {"delivery_disabled", "delivery_unavailable"}:
                 message = (
-                    "当前总结投递为 Server酱机器人，漫画不会发送到原群"
+                    "当前总结投递未启用群目标，已跳过漫画，不会发送到原群"
                     if status == "delivery_disabled"
                     else "漫画投递目标无效，未发送到原群，请检查总结投递配置"
                 )
@@ -336,16 +340,22 @@ class ComicCommandHandler:
             platform_id: 源群平台实例 ID。
 
         Returns:
-            群投递目标；Server酱仅支持文本总结，返回 None 跳过漫画。
+            群投递目标；停止投递或仅 Server酱文本通道时返回 None。
 
         Raises:
             ValueError: 投递配置无效或转发目标实际为原群。
         """
         mode = self.config_manager.get_report_delivery_mode()
-        if mode == "serverchan":
-            return None
         if mode == "source_group":
             return GroupReportTarget(group_id, platform_id)
+        if mode not in FORWARD_GROUP_DELIVERY_MODES:
+            if mode in QQ_OFFICIAL_DELIVERY_MODES:
+                return self.bot_manager.validate_qq_official_report_target(
+                    self.config_manager.get_qq_official_report_target(),
+                    group_id,
+                    platform_id,
+                )
+            return None
 
         target = self.config_manager.get_forward_report_target(group_id, platform_id)
         if target.group_id == group_id:
@@ -407,7 +417,7 @@ class ComicCommandHandler:
             logger.warning(f"漫画投递目标无效，跳过发送：{exc}")
             return "delivery_unavailable"
         if delivery_target is None:
-            logger.info("当前总结投递为 Server酱模式，跳过群漫画发送。")
+            logger.info("当前总结投递配置未启用群目标，跳过群漫画发送。")
             return "delivery_disabled"
 
         if trace:
@@ -512,7 +522,7 @@ class ComicCommandHandler:
                 logger.warning(f"漫画投递目标无效，取消发送：{exc}")
                 return
             if current_target is None:
-                logger.info("当前总结投递为 Server酱模式，取消群漫画发送。")
+                logger.info("当前总结投递配置未启用群目标，取消群漫画发送。")
                 return
 
             try:
@@ -526,7 +536,7 @@ class ComicCommandHandler:
                 )
                 target = self._resolve_delivery_target(group_id, platform_id)
                 if target is None:
-                    logger.info("总结投递已切换到 Server酱模式，取消群漫画发送。")
+                    logger.info("总结投递配置已关闭群目标，取消群漫画发送。")
                     return
                 if self.terminating:
                     return

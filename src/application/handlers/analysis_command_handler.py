@@ -316,6 +316,23 @@ class AnalysisCommandHandler:
             yield event.plain_result("❌ 总结投递配置无效，请检查插件的总结投递设置。")
             return
 
+        if delivery_mode == "disabled":
+            result["analysis_success"] = True
+            result["report_sent"] = False
+            result["report_delivery_skipped"] = True
+            result["reason"] = "report_delivery_disabled"
+            trace = TraceContext.current()
+            if trace:
+                trace.metadata["report_destination"] = "disabled"
+                trace.metadata["report_delivery_skipped"] = True
+                trace.metadata["report_delivery_results"] = {}
+                if trace.status == "running":
+                    trace.finish(status="succeeded")
+            yield event.plain_result(
+                "✅ 分析已完成；已开启停止向原群发送且未启用转发通道，本次总结不投递。"
+            )
+            return
+
         if not adapter and delivery_mode == "source_group":
             logger.warning(f"群 {group_id} 未找到对应的平台适配器，无法发送报告")
             return
@@ -351,7 +368,7 @@ class AnalysisCommandHandler:
                 if trace and trace.status == "running":
                     trace.finish(status="failed", error_message="总结投递失败")
                 yield event.plain_result(
-                    "❌ 总结投递失败，请检查目标群或 Server酱机器人配置；总结未发送到原群。"
+                    "❌ 总结投递失败，请检查指定群、QQ 官方机器人或 Server酱配置；总结未发送到原群。"
                 )
             return
 
