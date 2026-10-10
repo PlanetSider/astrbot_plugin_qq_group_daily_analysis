@@ -299,33 +299,57 @@ class ConfigManager:
         return val if isinstance(val, list) else [val]
 
     def get_report_delivery_mode(self) -> ReportDeliveryMode:
-        """将两个独立开关解析为投递组合，兼容尚未迁移的旧配置。
+        """解析独立通道和停止原群开关，兼容尚未迁移的旧配置。
 
         Returns:
-            原群、指定群、Server酱或指定群与 Server酱同时投递。
+            已启用的通道组合，或停止原群且无转发时的 disabled 状态。
 
         Raises:
             ValueError: 开关不是布尔值或旧版投递方式无效。
         """
         group = self._get_group("report_delivery")
+        stop_source: object = group.get("stop_source_group", False)
+        if not isinstance(stop_source, bool):
+            raise ValueError("停止向原群发送开关必须是布尔值，请检查总结投递配置")
+        source_mode: ReportDeliveryMode = "disabled" if stop_source else "source_group"
         mode: object = group.get("destination", "independent")
         if mode not in ("source_group", "forward_group", "serverchan", "independent"):
             raise ValueError("总结投递方式无效，请检查总结投递配置")
-        if "forward_group_enabled" in group or "serverchan_enabled" in group:
+        if any(
+            key in group
+            for key in (
+                "forward_group_enabled",
+                "qq_official_enabled",
+                "serverchan_enabled",
+            )
+        ):
             forward: object = group.get("forward_group_enabled", False)
+            qq_official: object = group.get("qq_official_enabled", False)
             serverchan: object = group.get("serverchan_enabled", False)
-            if not isinstance(forward, bool) or not isinstance(serverchan, bool):
+            if (
+                not isinstance(forward, bool)
+                or not isinstance(qq_official, bool)
+                or not isinstance(serverchan, bool)
+            ):
                 raise ValueError("总结转发开关必须是布尔值，请检查总结投递配置")
+            if qq_official:
+                if forward and serverchan:
+                    return "forward_group_and_qq_official_and_serverchan"
+                if forward:
+                    return "forward_group_and_qq_official"
+                if serverchan:
+                    return "qq_official_and_serverchan"
+                return "qq_official"
             if forward and serverchan:
                 return "forward_group_and_serverchan"
             if forward:
                 return "forward_group"
             if serverchan:
                 return "serverchan"
-            return "source_group"
+            return source_mode
 
         if mode in ("source_group", "independent"):
-            return "source_group"
+            return source_mode
         if mode == "forward_group":
             return "forward_group"
         if mode == "serverchan":
@@ -370,6 +394,35 @@ class ConfigManager:
         ):
             raise ValueError("转发目标不能是原群，请填写另外一个群")
         return GroupReportTarget(group_id=group_id, platform_id=platform_id)
+
+    def get_qq_official_report_target(self) -> GroupReportTarget:
+        """解析 QQ 官方机器人的完整群会话目标。
+
+        Returns:
+            目标 group_openid 与明确的平台实例 ID。
+
+        Raises:
+            ValueError: 目标为空、不是群会话或未指定平台实例。
+        """
+        raw_target: object = self._get_group("report_delivery").get(
+            "qq_official_target", ""
+        )
+        if not isinstance(raw_target, str) or not raw_target.strip():
+            raise ValueError("QQ 官方机器人目标群不能为空，请填写目标群的完整 /sid")
+        parts = raw_target.strip().split(":", 2)
+        if (
+            len(parts) != 3
+            or parts[1] != "GroupMessage"
+            or not parts[0].strip()
+            or not parts[2].strip()
+            or ":" in parts[2]
+        ):
+            raise ValueError(
+                "QQ 官方目标必须是完整群会话 ID：平台实例ID:GroupMessage:group_openid"
+            )
+        return GroupReportTarget(
+            group_id=parts[2].strip(), platform_id=parts[0].strip()
+        )
 
     def get_serverchan_bot_config(self) -> ServerChanBotConfig:
         """读取 Server酱³ Bot Token 与接收用户 UID。

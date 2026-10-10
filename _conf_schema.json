@@ -206,20 +206,26 @@
     "report_delivery": {
         "description": "总结投递",
         "type": "object",
-        "hint": "指定群和 Server酱是两个独立通道，可分别开启或同时开启。两个开关都关闭时发送原群；只开启 Server酱时仅推送文本总结并跳过漫画；开启指定群后，群总结、漫画及相册备份只发目标群，不再发送原群。双通道各自尝试，失败不会回发原群。",
+        "hint": "指定群、QQ 官方机器人和 Server酱可分别或同时开启，开启任一通道后停止发送原群总结。独立开启“停止向原群发送”时，即使没有转发通道也跳过总结和漫画投递，分析及本地记录照常保留；发送失败不会回发原群。漫画优先发指定群，其次发 QQ 官方目标。",
         "items": {
             "destination": {
                 "type": "string",
                 "description": "旧版投递配置迁移标记",
                 "default": "independent",
                 "invisible": true,
-                "hint": "仅用于将旧版单目标设置迁移为两个独立开关，迁移后由开关决定投递目标。"
+                "hint": "仅用于将旧版单目标设置迁移为独立开关，迁移后由开关决定投递目标。"
+            },
+            "stop_source_group": {
+                "type": "bool",
+                "description": "停止向原群发送",
+                "default": false,
+                "hint": "独立控制原群投递。开启后，即使没有启用指定群、QQ 官方或 Server酱，也不向原群发送总结或漫画；分析和本地记录仍正常保留，不会因未发送而触发失败重试。关闭此开关时，启用任一转发通道仍按现有规则停止发送原群。"
             },
             "forward_group_enabled": {
                 "type": "bool",
                 "description": "转发到指定群（停止发送原群）",
                 "default": false,
-                "hint": "开启后按原输出格式将总结、漫画和相册备份发到指定群。可与 Server酱同时开启；目标无效或发送失败时不会回发原群。"
+                "hint": "开启后按原输出格式将总结、漫画和相册备份发到指定群。可与 QQ 官方机器人、Server酱同时开启；目标无效或发送失败时不会回发原群。"
             },
             "forward_target": {
                 "type": "string",
@@ -228,11 +234,24 @@
                 "condition": {"forward_group_enabled": true},
                 "hint": "填写另外一个群的群号（沿用源群平台），或完整会话 ID，例如 onebot-main:GroupMessage:123456。建议在目标群执行 /sid 获取。QQ 官方请使用 group_openid。机器人必须能够向目标群发消息；目标无效或发送失败时不会回发原群。"
             },
+            "qq_official_enabled": {
+                "type": "bool",
+                "description": "通过 QQ 官方机器人发送",
+                "default": false,
+                "hint": "使用 AstrBot 已添加的 QQ 官方机器人，按原输出格式发送总结。可与指定群、Server酱同时开启；开启后停止发送原群总结。未开启指定群时，漫画也发送到此目标。"
+            },
+            "qq_official_target": {
+                "type": "string",
+                "description": "QQ 官方机器人目标群会话",
+                "default": "",
+                "condition": {"qq_official_enabled": true},
+                "hint": "在目标群通过要使用的 QQ 官方机器人执行 /sid，粘贴完整结果，例如 qq-official-main:GroupMessage:目标群group_openid。必须填写实际平台实例 ID 和 group_openid，不能只填QQ群号或协议类型；无需在插件重复填写 AppID/密钥。目标不能是原群，主动发送权限和额度由 QQ 开放平台决定。"
+            },
             "serverchan_enabled": {
                 "type": "bool",
                 "description": "推送到 Server酱机器人",
                 "default": false,
-                "hint": "独立发送文本总结，不受图片/HTML 输出格式限制。可与指定群同时开启；只开启本通道时停止发送原群总结并跳过漫画。"
+                "hint": "独立发送文本总结，不受图片/HTML 输出格式限制。可与指定群、QQ 官方机器人同时开启；只开启本通道时停止发送原群总结并跳过漫画。"
             },
             "serverchan_bot_token": {
                 "type": "string",
