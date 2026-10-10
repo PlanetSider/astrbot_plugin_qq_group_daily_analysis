@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
@@ -197,4 +199,18 @@ if "astrbot.api" not in sys.modules:
     sys.modules.setdefault("astrbot.core.message", astrbot_core_message_module)
     sys.modules.setdefault(
         "astrbot.core.message.components", astrbot_core_message_components_module
+    )
+
+
+# 保留最初的类引用；部分独立测试会替换宿主模块中的 StarTools。
+from astrbot.api.star import StarTools as TEST_STAR_TOOLS
+
+
+@pytest.fixture(autouse=True)
+def isolated_plugin_data_dir(monkeypatch, tmp_path):
+    """每个测试使用独立数据目录，避免依赖宿主系统的 /tmp。"""
+    monkeypatch.setattr(
+        TEST_STAR_TOOLS,
+        "get_data_dir",
+        classmethod(lambda cls, name="": tmp_path / "plugin_data"),
     )

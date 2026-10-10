@@ -667,7 +667,7 @@ def test_activity_visualizer_and_checkpoint_deserialization_hourly_activity(
 
 
 @pytest.mark.asyncio
-async def test_report_dispatcher_span_tracking():
+async def test_report_dispatcher_span_tracking(tmp_path: Path):
     """验证 ReportDispatcher 分发时自动记录 DISPATCH_REPORT span 的丰富元数据。"""
     from src.infrastructure.reporting.dispatcher import ReportDispatcher
 
@@ -678,11 +678,12 @@ async def test_report_dispatcher_span_tracking():
     )
 
     mock_config = MagicMock()
+    mock_config.get_report_delivery_mode = MagicMock(return_value="source_group")
     mock_config.get_output_format = MagicMock(return_value=["image"])
     mock_config.get_show_report_caption = MagicMock(return_value=True)
 
     mock_rep_gen = MagicMock()
-    mock_rep_gen.data_dir = Path("./tmp")
+    mock_rep_gen.data_dir = tmp_path
     mock_rep_gen.generate_image_report = AsyncMock(
         return_value=("base64://dGVzdA==", "<html></html>")
     )

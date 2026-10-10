@@ -2,13 +2,17 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from src.domain.value_objects.report_delivery import GroupReportTarget
 from src.infrastructure.reporting.dispatcher import ReportDispatcher
 from src.infrastructure.scheduler.auto_scheduler import AutoScheduler
 
 
 def test_dispatch_returns_false_when_no_report_format_is_sent():
     async def scenario():
-        config_manager = SimpleNamespace(get_output_format=Mock(return_value=["text"]))
+        config_manager = SimpleNamespace(
+            get_output_format=Mock(return_value=["text"]),
+            get_report_delivery_mode=Mock(return_value="source_group"),
+        )
         dispatcher = ReportDispatcher(config_manager, None, None)
         dispatcher._dispatch_text = AsyncMock(return_value=False)
 
@@ -16,6 +20,75 @@ def test_dispatch_returns_false_when_no_report_format_is_sent():
 
         dispatcher._dispatch_text.return_value = True
         assert await dispatcher.dispatch("123456", {}, "onebot-main") is True
+
+    asyncio.run(scenario())
+
+
+def test_forward_delivery_uses_target_group_without_source_fallback():
+    async def scenario():
+        source_adapter = SimpleNamespace(
+            get_platform_name=Mock(return_value="onebot"),
+            send_text_report=AsyncMock(return_value=True),
+        )
+        target_adapter = SimpleNamespace(
+            get_platform_name=Mock(return_value="onebot"),
+            send_text_report=AsyncMock(return_value=True),
+        )
+        bot_manager = SimpleNamespace(
+            get_adapter=Mock(
+                side_effect=lambda platform_id: {
+                    "source-platform": source_adapter,
+                    "target-platform": target_adapter,
+                }.get(platform_id)
+            )
+        )
+        message_sender = SimpleNamespace(
+            bot_manager=bot_manager,
+            send_text=AsyncMock(return_value=False),
+        )
+        config_manager = SimpleNamespace(
+            get_report_delivery_mode=Mock(return_value="forward_group"),
+            get_forward_report_target=Mock(
+                return_value=GroupReportTarget("target-group", "target-platform")
+            ),
+            get_output_format=Mock(return_value=["text"]),
+        )
+        report_generator = SimpleNamespace(
+            generate_text_report=Mock(return_value="源群总结正文")
+        )
+        dispatcher = ReportDispatcher(config_manager, report_generator, message_sender)
+
+        assert await dispatcher.dispatch("source-group", {}, "source-platform") is True
+
+        target_adapter.send_text_report.assert_awaited_once_with(
+            "target-group", "源群总结正文"
+        )
+        source_adapter.send_text_report.assert_not_awaited()
+        message_sender.send_text.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_serverchan_delivery_does_not_require_platform_adapter():
+    async def scenario():
+        config_manager = SimpleNamespace(
+            get_report_delivery_mode=Mock(return_value="serverchan"),
+            get_serverchan_bot_config=Mock(
+                return_value=SimpleNamespace(token="token", chat_id=123, silent=False)
+            ),
+        )
+        report_generator = SimpleNamespace(
+            generate_text_report=Mock(return_value="源群总结正文")
+        )
+        message_sender = SimpleNamespace(bot_manager=SimpleNamespace())
+        dispatcher = ReportDispatcher(config_manager, report_generator, message_sender)
+        dispatcher.serverchan_sender.send_summary = AsyncMock(return_value=True)
+
+        assert await dispatcher.dispatch("source-group", {}, None) is True
+        dispatcher.serverchan_sender.send_summary.assert_awaited_once()
+        assert dispatcher.serverchan_sender.send_summary.await_args.args[1].endswith(
+            "源群总结正文"
+        )
 
     asyncio.run(scenario())
 

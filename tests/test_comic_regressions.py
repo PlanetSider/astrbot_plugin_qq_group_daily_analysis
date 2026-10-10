@@ -385,7 +385,8 @@ def test_qq_official_webhook_uses_official_report_capabilities():
         plugin = SimpleNamespace(
             _terminating=False,
             config_manager=SimpleNamespace(
-                get_output_format=Mock(return_value=["text"])
+                get_output_format=Mock(return_value=["text"]),
+                get_report_delivery_mode=Mock(return_value="source_group"),
             ),
             _send_text_reports=AsyncMock(return_value=True),
             comic_command_handler=SimpleNamespace(
