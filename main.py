@@ -269,6 +269,7 @@ class GroupDailyAnalysis(Star):
             comic_handler=self.comic_command_handler,
             plugin_data_dir=plugin_data_dir,
             plugin_instance=self,
+            report_dispatcher=self.auto_scheduler.report_dispatcher,
         )
 
         # 6. LLM Tool 业务服务
