@@ -72,6 +72,19 @@ class ConfigMigrator:
             logger.info("output_format 已从旧版 string 自动迁移为 list")
             modified = True
 
+        delivery = self.cm._get_group("report_delivery")
+        legacy_destination = delivery.get("destination")
+        if legacy_destination in ("source_group", "forward_group", "serverchan"):
+            if legacy_destination == "forward_group":
+                delivery["forward_group_enabled"] = True
+            elif legacy_destination == "serverchan":
+                delivery["serverchan_enabled"] = True
+            delivery.setdefault("forward_group_enabled", False)
+            delivery.setdefault("serverchan_enabled", False)
+            delivery["destination"] = "independent"
+            logger.info("总结投递已从旧版单目标迁移为指定群和 Server酱独立开关")
+            modified = True
+
         if modified:
             self.cm.save_config()
             logger.info("旧版配置迁移完成，已自动回写")

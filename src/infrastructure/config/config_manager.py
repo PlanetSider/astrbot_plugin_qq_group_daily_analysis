@@ -299,18 +299,32 @@ class ConfigManager:
         return val if isinstance(val, list) else [val]
 
     def get_report_delivery_mode(self) -> ReportDeliveryMode:
-        """获取总结投递方式，旧配置默认发送原群。
+        """将两个独立开关解析为投递组合，兼容尚未迁移的旧配置。
 
         Returns:
-            原群、指定群或 Server酱机器人投递模式。
+            原群、指定群、Server酱或指定群与 Server酱同时投递。
 
         Raises:
-            ValueError: 已配置的投递方式无效。
+            ValueError: 开关不是布尔值或旧版投递方式无效。
         """
-        mode: object = self._get_group("report_delivery").get(
-            "destination", "source_group"
-        )
-        if mode == "source_group":
+        group = self._get_group("report_delivery")
+        mode: object = group.get("destination", "independent")
+        if mode not in ("source_group", "forward_group", "serverchan", "independent"):
+            raise ValueError("总结投递方式无效，请检查总结投递配置")
+        if "forward_group_enabled" in group or "serverchan_enabled" in group:
+            forward: object = group.get("forward_group_enabled", False)
+            serverchan: object = group.get("serverchan_enabled", False)
+            if not isinstance(forward, bool) or not isinstance(serverchan, bool):
+                raise ValueError("总结转发开关必须是布尔值，请检查总结投递配置")
+            if forward and serverchan:
+                return "forward_group_and_serverchan"
+            if forward:
+                return "forward_group"
+            if serverchan:
+                return "serverchan"
+            return "source_group"
+
+        if mode in ("source_group", "independent"):
             return "source_group"
         if mode == "forward_group":
             return "forward_group"
