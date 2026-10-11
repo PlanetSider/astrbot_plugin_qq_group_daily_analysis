@@ -238,6 +238,7 @@ def make_dispatcher(
 ):
     source_adapter = SimpleNamespace(
         get_platform_name=Mock(return_value="onebot"),
+        get_group_info=AsyncMock(return_value=None),
         send_text_report=AsyncMock(return_value=True),
     )
     target_adapter = SimpleNamespace(
@@ -311,7 +312,9 @@ def test_same_group_identifier_on_distinct_platforms_is_allowed(tmp_path):
     assert (
         asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
     )
-    target.send_text_report.assert_awaited_once_with("source-group", "源群总结正文")
+    target.send_text_report.assert_awaited_once_with(
+        "source-group", "来源群：source-group\n\n源群总结正文"
+    )
     source.send_text_report.assert_not_awaited()
 
 
@@ -330,7 +333,9 @@ def test_forward_format_failure_and_text_fallback_only_use_target(
         asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is False
     )
     source.send_text_report.assert_not_awaited()
-    target.send_text_report.assert_awaited_once_with("target-group", "源群总结正文")
+    target.send_text_report.assert_awaited_once_with(
+        "target-group", "来源群：source-group\n\n源群总结正文"
+    )
     assert dispatcher.message_sender.send_text.await_args.args[0] == "target-group"
     assert dispatcher.message_sender.send_text.await_args.args[2] == "target-platform"
     if output_format == "image":
@@ -340,7 +345,10 @@ def test_forward_format_failure_and_text_fallback_only_use_target(
             == "source-platform"
         )
         dispatcher.message_sender.send_image_smart.assert_awaited_once_with(
-            "target-group", str(report_path), "", "target-platform"
+            "target-group",
+            str(report_path),
+            "来源群：source-group",
+            "target-platform",
         )
         dispatcher._try_upload_image.assert_awaited_once_with(
             "target-group", str(report_path), "target-platform"
@@ -353,7 +361,10 @@ def test_forward_format_failure_and_text_fallback_only_use_target(
             == "source-platform"
         )
         dispatcher.message_sender.send_file.assert_awaited_once_with(
-            "target-group", str(report_path), caption="", platform_id="target-platform"
+            "target-group",
+            str(report_path),
+            caption="来源群：source-group",
+            platform_id="target-platform",
         )
 
 
@@ -553,7 +564,9 @@ def test_independent_switches_send_only_to_enabled_destinations(
         asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
     )
     if forward:
-        target.send_text_report.assert_awaited_once_with("target-group", "源群总结正文")
+        target.send_text_report.assert_awaited_once_with(
+            "target-group", "来源群：source-group\n\n源群总结正文"
+        )
     else:
         target.send_text_report.assert_not_awaited()
     if forward or serverchan:
@@ -591,7 +604,9 @@ def test_dual_delivery_attempts_both_channels_and_records_partial_results(
         _current_trace.reset(token)
 
     assert sent is (group_ok or bot_ok)
-    target.send_text_report.assert_awaited_once_with("target-group", "源群总结正文")
+    target.send_text_report.assert_awaited_once_with(
+        "target-group", "来源群：source-group\n\n源群总结正文"
+    )
     dispatcher.serverchan_sender.send_summary.assert_awaited_once()
     assert trace.metadata["report_delivery_results"] == {
         "group": group_ok,
@@ -646,6 +661,8 @@ def test_invalid_serverchan_config_does_not_undo_successful_group_delivery(
     assert (
         asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
     )
-    target.send_text_report.assert_awaited_once_with("target-group", "源群总结正文")
+    target.send_text_report.assert_awaited_once_with(
+        "target-group", "来源群：source-group\n\n源群总结正文"
+    )
     dispatcher.serverchan_sender.send_summary.assert_not_awaited()
     source.send_text_report.assert_not_awaited()

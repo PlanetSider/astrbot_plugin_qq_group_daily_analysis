@@ -28,6 +28,7 @@ def test_forward_delivery_uses_target_group_without_source_fallback():
     async def scenario():
         source_adapter = SimpleNamespace(
             get_platform_name=Mock(return_value="onebot"),
+            get_group_info=AsyncMock(return_value=None),
             send_text_report=AsyncMock(return_value=True),
         )
         target_adapter = SimpleNamespace(
@@ -61,7 +62,7 @@ def test_forward_delivery_uses_target_group_without_source_fallback():
         assert await dispatcher.dispatch("source-group", {}, "source-platform") is True
 
         target_adapter.send_text_report.assert_awaited_once_with(
-            "target-group", "源群总结正文"
+            "target-group", "来源群：source-group\n\n源群总结正文"
         )
         source_adapter.send_text_report.assert_not_awaited()
         message_sender.send_text.assert_not_awaited()

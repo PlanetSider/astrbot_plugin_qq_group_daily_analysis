@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import tempfile
@@ -135,6 +136,38 @@ class ReportDispatcher:
             logger.info(f"[{trace_id}] 群 {group_id} 按总结投递配置跳过发送")
             return True
 
+        source_label = ""
+        if mode != "source_group":
+            # 仅复用同一源群、同一平台的上下文，避免并发或跨平台群号混淆。
+            group_name = (
+                trace.group_name
+                if trace
+                and trace.group_id == group_id
+                and trace.platform.casefold() == (platform_id or "").casefold()
+                else ""
+            )
+            if not group_name.strip():
+                try:
+                    source_adapter = self.message_sender.bot_manager.get_adapter(
+                        platform_id
+                    )
+                    if source_adapter:
+                        info = await asyncio.wait_for(
+                            source_adapter.get_group_info(group_id), timeout=5
+                        )
+                        if info:
+                            group_name = info.group_name
+                except Exception as exc:
+                    logger.warning(
+                        f"[{trace_id}] 获取来源群名称失败，保留群 ID：{type(exc).__name__}"
+                    )
+            group_name = " ".join(group_name.split())
+            source_label = (
+                f"来源群：{group_name}（{group_id}）"
+                if group_name and group_name != group_id
+                else f"来源群：{group_id}"
+            )
+
         forward_enabled = mode in FORWARD_GROUP_DELIVERY_MODES
         qq_official_enabled = mode in QQ_OFFICIAL_DELIVERY_MODES
         serverchan_enabled = mode in SERVERCHAN_DELIVERY_MODES
@@ -187,7 +220,12 @@ class ReportDispatcher:
                         ):
                             raise ValueError("转发目标不能是原群，请填写另外一个群")
                 channel_results[channel] = await self._dispatch_group_reports(
-                    group_id, analysis_result, platform_id, target, output_formats
+                    group_id,
+                    analysis_result,
+                    platform_id,
+                    target,
+                    output_formats,
+                    source_label=source_label,
                 )
             except Exception as exc:
                 detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
@@ -197,7 +235,7 @@ class ReportDispatcher:
         if serverchan_enabled:
             try:
                 channel_results["serverchan"] = await self._dispatch_serverchan(
-                    group_id, analysis_result
+                    group_id, analysis_result, source_label=source_label
                 )
             except Exception as exc:
                 # 机器人请求地址包含令牌，禁止输出异常正文及堆栈。
@@ -214,9 +252,13 @@ class ReportDispatcher:
         return sent_any
 
     async def _dispatch_serverchan(
-        self, group_id: str, analysis_result: AnalysisResultPayload
+        self,
+        group_id: str,
+        analysis_result: AnalysisResultPayload,
+        *,
+        source_label: str = "",
     ) -> bool:
-        """独立生成并推送文本总结，不依赖群平台适配器。"""
+        """独立生成并推送含来源标识的文本总结。"""
         bot_config = self.config_manager.get_serverchan_bot_config()
         if not self.report_generator:
             logger.error("[分发器] 报告生成器未初始化，无法推送 Server酱总结")
@@ -239,7 +281,7 @@ class ReportDispatcher:
         ) as dispatch_span:
             sent = await self.serverchan_sender.send_summary(
                 bot_config,
-                f"📊 每日群聊分析报告（来源群：{group_id}）：\n\n{text}",
+                f"📊 每日群聊分析报告\n{source_label or f'来源群：{group_id}'}\n\n{text}",
             )
             if dispatch_span:
                 dispatch_span.setdefault("payload", {})["success"] = sent
@@ -252,8 +294,10 @@ class ReportDispatcher:
         platform_id: str | None,
         target: ReportTarget,
         output_formats: list[str] | None,
+        *,
+        source_label: str = "",
     ) -> bool:
-        """按源群生成报告，各格式和回退均保留已校验的实际目标。"""
+        """按源群生成报告，各格式和回退均保留目标及来源标识。"""
         trace_id = TraceContext.get()
         if output_formats is None:
             output_formats = self.config_manager.get_output_format()
@@ -280,7 +324,13 @@ class ReportDispatcher:
                 continue
             try:
                 ok = bool(
-                    await handler(group_id, analysis_result, platform_id, target=target)
+                    await handler(
+                        group_id,
+                        analysis_result,
+                        platform_id,
+                        target=target,
+                        source_label=source_label,
+                    )
                 )
                 format_results[fmt] = ok
                 sent_any = ok or sent_any
@@ -306,6 +356,7 @@ class ReportDispatcher:
         platform_id: str | None,
         *,
         target: ReportTarget | None = None,
+        source_label: str = "",
     ) -> bool:
         trace_id = TraceContext.get()
         trace_ctx = TraceContext.current()
@@ -318,7 +369,11 @@ class ReportDispatcher:
         if not self._html_render_func:
             logger.warning(f"[{trace_id}] 未设置 HTML 渲染函数，回退到文本模式。")
             return await self._dispatch_text(
-                group_id, analysis_result, platform_id, target=delivery_target
+                group_id,
+                analysis_result,
+                platform_id,
+                target=delivery_target,
+                source_label=source_label,
             )
 
         # 2. 生成图片
@@ -458,6 +513,8 @@ class ReportDispatcher:
                     if self.config_manager.get_show_report_caption()
                     else ""
                 )
+                if source_label:
+                    caption = f"{source_label}\n{caption}".rstrip()
                 is_b64 = image_url.startswith("base64://")
                 raw_image_kb = 0.0
                 base64_payload_kb = 0.0
@@ -546,7 +603,11 @@ class ReportDispatcher:
             f"[{trace_id}] Image dispatch failed, falling back to text report."
         )
         return await self._dispatch_text(
-            group_id, analysis_result, platform_id, target=delivery_target
+            group_id,
+            analysis_result,
+            platform_id,
+            target=delivery_target,
+            source_label=source_label,
         )
 
     async def _dispatch_html(
@@ -556,6 +617,7 @@ class ReportDispatcher:
         platform_id: str | None,
         *,
         target: ReportTarget | None = None,
+        source_label: str = "",
     ) -> bool:
         trace_id = TraceContext.get()
         trace_ctx = TraceContext.current()
@@ -700,13 +762,15 @@ class ReportDispatcher:
                                 adapter
                                 and await adapter.send_private_text(
                                     delivery_target,
-                                    f"📊 今日群聊分析报告已生成：\n{report_url}",
+                                    (f"{source_label}\n" if source_label else "")
+                                    + f"📊 今日群聊分析报告已生成：\n{report_url}",
                                 )
                             )
                         else:
                             sent = await self.message_sender.send_text(
                                 delivery_target.group_id,
-                                f"📊 今日群聊分析报告已生成：\n{report_url}",
+                                (f"{source_label}\n" if source_label else "")
+                                + f"📊 今日群聊分析报告已生成：\n{report_url}",
                                 delivery_target.platform_id,
                             )
                     else:
@@ -720,6 +784,8 @@ class ReportDispatcher:
                         if self.config_manager.get_show_report_caption()
                         else ""
                     )
+                    if source_label:
+                        caption = f"{source_label}\n{caption}".rstrip()
                     if isinstance(delivery_target, QQOfficialPrivateTarget):
                         adapter = self.message_sender.bot_manager.get_adapter(
                             delivery_target.platform_id
@@ -727,7 +793,10 @@ class ReportDispatcher:
                         sent = bool(
                             adapter
                             and await adapter.send_private_file(
-                                delivery_target, html_path, Path(html_path).name
+                                delivery_target,
+                                html_path,
+                                Path(html_path).name,
+                                caption=caption,
                             )
                         )
                     else:
@@ -764,7 +833,11 @@ class ReportDispatcher:
             f"[{trace_id}] HTML dispatch failed, falling back to text report."
         )
         return await self._dispatch_text(
-            group_id, analysis_result, platform_id, target=delivery_target
+            group_id,
+            analysis_result,
+            platform_id,
+            target=delivery_target,
+            source_label=source_label,
         )
 
     async def _dispatch_text(
@@ -774,6 +847,7 @@ class ReportDispatcher:
         platform_id: str | None,
         *,
         target: ReportTarget | None = None,
+        source_label: str = "",
     ) -> bool:
         """生成源群的文本报告并发送到指定目标。
 
@@ -814,6 +888,10 @@ class ReportDispatcher:
             )
         else:
             text_report = self.report_generator.generate_text_report(analysis_result)
+        if source_label:
+            text_report = f"{source_label}\n\n{text_report}"
+            if fallback_report is not None:
+                fallback_report = f"{source_label}\n\n{fallback_report}"
         adapter = self.message_sender.bot_manager.get_adapter(
             delivery_target.platform_id
         )

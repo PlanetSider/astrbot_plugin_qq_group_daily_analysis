@@ -44,6 +44,7 @@ def delivery_rig(tmp_path):
         return SimpleNamespace(
             platform_id=platform_id,
             get_platform_name=Mock(return_value=name),
+            get_group_info=AsyncMock(return_value=None),
             send_text_report=AsyncMock(return_value=True),
             send_private_text_report=AsyncMock(return_value=True),
             send_private_text=AsyncMock(return_value=True),
@@ -123,7 +124,10 @@ def test_switch_combinations_deliver_only_to_enabled_destinations(
     rig.sender.send_text.assert_not_awaited()
     if official:
         call = rig.official.send_text_report.await_args
-        assert call.args == ("official-group", "官方 Markdown 总结")
+        assert call.args == (
+            "official-group",
+            "来源群：source-group\n\n官方 Markdown 总结",
+        )
         assert "源群总结正文" in call.kwargs["fallback_content"]
         assert (
             rig.generator.generate_markdown_report.await_args.kwargs["mention_style"]
@@ -627,7 +631,7 @@ def test_private_attachment_failure_falls_back_only_to_same_private_target(
     attachment_hook.assert_awaited_once()
     assert attachment_hook.await_args.args[0] == target
     rig.official.send_private_text_report.assert_awaited_once_with(
-        target, "源群总结正文"
+        target, "来源群：source-group\n\n源群总结正文"
     )
     rig.official.send_text_report.assert_not_awaited()
     rig.source.send_text_report.assert_not_awaited()
@@ -668,4 +672,248 @@ def test_private_failure_does_not_block_other_channels_or_send_to_groups(
     rig.dispatcher.serverchan_sender.send_summary.assert_awaited_once()
     rig.official.send_text_report.assert_not_awaited()
     rig.source.send_text_report.assert_not_awaited()
+
+
+def enable_external_destination(rig, destination):
+    """为来源标识回归只启用一个外部通道。"""
+    rig.settings.update(
+        forward_group_enabled=destination == "forward",
+        qq_official_enabled=destination in {"official", "c2c", "guild"},
+        serverchan_enabled=destination == "serverchan",
+    )
+    if destination in {"c2c", "guild"}:
+        rig.settings.update(
+            qq_official_target="official-main:FriendMessage:user-openid",
+            qq_official_private_scene=destination,
+            qq_official_source_guild_id="source-guild",
+        )
+
+
+@pytest.mark.parametrize("destination", ["forward", "official", "c2c", "guild"])
+@pytest.mark.parametrize("output", ["text", "image", "html", "html_url"])
+def test_external_report_formats_show_source_name_even_without_caption(
+    delivery_rig, destination, output
+):
+    rig = delivery_rig
+    enable_external_destination(rig, destination)
+    rig.trace.group_name = "项目讨论群\n 第一组"
+    label = "来源群：项目讨论群 第一组（source-group）"
+    html_path = rig.data_dir / "source-group.html"
+    html_path.write_text("<html>报告</html>", encoding="utf-8")
+    rig.generator.generate_image_report.return_value = (
+        "https://example.com/report.png",
+        None,
+    )
+    rig.generator.generate_html_report.return_value = (str(html_path), None)
+    rig.config.get_html_only_url = Mock(return_value=output == "html_url")
+    rig.config.get_html_base_url = Mock(return_value="https://reports.example.com")
+    rig.config.get_html_output_dir = Mock(return_value=str(rig.data_dir))
+    rig.sender.send_image_smart.return_value = True
+    rig.sender.send_file.return_value = True
+    rig.sender.send_text.return_value = True
+    private = destination in {"c2c", "guild"}
+    if private:
+        hook = {
+            "text": rig.official.send_private_text_report,
+            "image": rig.official.send_private_image,
+            "html": rig.official.send_private_file,
+            "html_url": rig.official.send_private_text,
+        }[output]
+    else:
+        text_adapter = rig.target if destination == "forward" else rig.official
+        hook = {
+            "text": text_adapter.send_text_report,
+            "image": rig.sender.send_image_smart,
+            "html": rig.sender.send_file,
+            "html_url": rig.sender.send_text,
+        }[output]
+    assert (
+        asyncio.run(
+            rig.dispatcher.dispatch(
+                "source-group",
+                {},
+                "source-platform",
+                output_formats=["html" if output == "html_url" else output],
+            )
+        )
+        is True
+    )
+    hook.assert_awaited_once()
+    call = hook.await_args
+    if output in {"text", "html_url"}:
+        assert call.args[1].startswith(label + "\n")
+        if output == "html_url":
+            assert "https://reports.example.com/source-group.html" in call.args[1]
+        elif destination == "official":
+            assert call.kwargs["fallback_content"].startswith(label + "\n\n")
+    elif output == "image" and not private:
+        assert call.args[2] == label
+    else:
+        assert call.kwargs["caption"] == label
+    if private:
+        assert call.args[0] == rig.config.get_qq_official_report_target()
+        rig.sender.send_text.assert_not_awaited()
+        rig.sender.send_file.assert_not_awaited()
+        rig.sender.send_image_smart.assert_not_awaited()
+        rig.dispatcher._try_upload_image.assert_not_awaited()
+    else:
+        assert call.args[0] == (
+            "target-group" if destination == "forward" else "official-group"
+        )
+    if output == "image":
+        assert rig.generator.generate_image_report.await_args.args[1] == "source-group"
+    elif output in {"html", "html_url"}:
+        assert rig.generator.generate_html_report.await_args.args[1] == "source-group"
+    rig.source.get_group_info.assert_not_awaited()
+    rig.target.get_group_info.assert_not_awaited()
+    rig.official.get_group_info.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [
+        "cached",
+        "api",
+        "wrong_group",
+        "wrong_platform",
+        "blank_trace",
+        "missing",
+        "exception",
+        "timeout",
+        "id_name",
+        "without_trace",
+    ],
+)
+def test_source_name_lookup_is_shared_and_never_uses_other_group_context(
+    delivery_rig, lookup
+):
+    rig = delivery_rig
+    rig.settings.update(
+        forward_group_enabled=True, qq_official_enabled=True, serverchan_enabled=True
+    )
+    rig.source.get_group_info.return_value = SimpleNamespace(group_name="真实源群")
+    expected = "来源群：真实源群（source-group）"
+    if lookup == "cached":
+        rig.trace.group_name = "缓存源群"
+        rig.trace.platform = "SOURCE-PLATFORM"
+        expected = "来源群：缓存源群（source-group）"
+    elif lookup == "wrong_group":
+        rig.trace.group_id = "wrong-group"
+        rig.trace.group_name = "其他群错误名称"
+    elif lookup == "wrong_platform":
+        rig.trace.platform = "wrong-platform"
+        rig.trace.group_name = "其他平台错误名称"
+    elif lookup == "blank_trace":
+        rig.trace.group_name = " \n\t "
+    elif lookup == "missing":
+        rig.source.get_group_info.return_value = None
+        expected = "来源群：source-group"
+    elif lookup in {"exception", "timeout"}:
+        rig.source.get_group_info.side_effect = (
+            TimeoutError("查询超时")
+            if lookup == "timeout"
+            else RuntimeError("查询失败")
+        )
+        expected = "来源群：source-group"
+    elif lookup == "id_name":
+        rig.source.get_group_info.return_value = SimpleNamespace(
+            group_name="source-group"
+        )
+        expected = "来源群：source-group"
+    token = _current_trace.set(None if lookup == "without_trace" else rig.trace)
+    try:
+        assert (
+            asyncio.run(rig.dispatcher.dispatch("source-group", {}, "source-platform"))
+            is True
+        )
+    finally:
+        _current_trace.reset(token)
+    assert rig.target.send_text_report.await_args.args == (
+        "target-group",
+        f"{expected}\n\n源群总结正文",
+    )
+    assert rig.official.send_text_report.await_args.args == (
+        "official-group",
+        f"{expected}\n\n官方 Markdown 总结",
+    )
+    assert rig.official.send_text_report.await_args.kwargs["fallback_content"] == (
+        f"{expected}\n\n源群总结正文"
+    )
+    pushed_text = rig.dispatcher.serverchan_sender.send_summary.await_args.args[1]
+    assert expected + "\n\n源群总结正文" in pushed_text
+    assert "其他群错误名称" not in pushed_text
+    assert "其他平台错误名称" not in pushed_text
+    if lookup == "cached":
+        rig.source.get_group_info.assert_not_awaited()
+    else:
+        rig.source.get_group_info.assert_awaited_once_with("source-group")
+    rig.target.get_group_info.assert_not_awaited()
+    rig.official.get_group_info.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+
+
+@pytest.mark.parametrize("destination", ["forward", "official", "c2c", "guild"])
+@pytest.mark.parametrize("output", ["image", "html"])
+def test_external_attachment_failure_keeps_source_name_in_same_target_text(
+    delivery_rig, destination, output
+):
+    rig = delivery_rig
+    enable_external_destination(rig, destination)
+    rig.trace.group_name = "回退来源群"
+    label = "来源群：回退来源群（source-group）"
+    html_path = rig.data_dir / "source-group.html"
+    html_path.write_text("报告", encoding="utf-8")
+    rig.generator.generate_image_report.return_value = (
+        "https://example.com/report.png",
+        None,
+    )
+    rig.generator.generate_html_report.return_value = (str(html_path), None)
+    rig.official.send_private_image.return_value = False
+    rig.official.send_private_file.return_value = False
+    assert (
+        asyncio.run(
+            rig.dispatcher.dispatch(
+                "source-group", {}, "source-platform", output_formats=[output]
+            )
+        )
+        is True
+    )
+    if destination in {"c2c", "guild"}:
+        hook = rig.official.send_private_text_report
+        assert hook.await_args.args[0] == rig.config.get_qq_official_report_target()
+        rig.sender.send_text.assert_not_awaited()
+        rig.sender.send_file.assert_not_awaited()
+        rig.sender.send_image_smart.assert_not_awaited()
+    else:
+        hook = (
+            rig.target if destination == "forward" else rig.official
+        ).send_text_report
+        assert hook.await_args.args[0] == (
+            "target-group" if destination == "forward" else "official-group"
+        )
+    hook.assert_awaited_once()
+    assert hook.await_args.args[1].startswith(label + "\n\n")
+    rig.source.send_text_report.assert_not_awaited()
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_source_group_and_disabled_delivery_do_not_add_external_source_label(
+    delivery_rig, disabled
+):
+    rig = delivery_rig
+    rig.trace.group_name = "原群名称"
+    rig.settings["stop_source_group"] = disabled
+    assert (
+        asyncio.run(rig.dispatcher.dispatch("source-group", {}, "source-platform"))
+        is True
+    )
+    if disabled:
+        rig.source.send_text_report.assert_not_awaited()
+        rig.generator.generate_text_report.assert_not_called()
+    else:
+        rig.source.send_text_report.assert_awaited_once_with(
+            "source-group", "源群总结正文"
+        )
+    rig.source.get_group_info.assert_not_awaited()
     rig.sender.send_text.assert_not_awaited()
