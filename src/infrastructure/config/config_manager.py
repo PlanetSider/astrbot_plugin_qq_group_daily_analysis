@@ -16,6 +16,8 @@ from astrbot.api.star import StarTools
 
 from ...domain.value_objects.report_delivery import (
     GroupReportTarget,
+    QQOfficialPrivateTarget,
+    ReportTarget,
     ServerChanBotConfig,
 )
 from ...shared.constants import DEFAULT_ATRI_ASSETS_CDN_URL, PLUGIN_NAME
@@ -395,33 +397,49 @@ class ConfigManager:
             raise ValueError("转发目标不能是原群，请填写另外一个群")
         return GroupReportTarget(group_id=group_id, platform_id=platform_id)
 
-    def get_qq_official_report_target(self) -> GroupReportTarget:
-        """解析 QQ 官方机器人的完整群会话目标。
+    def get_qq_official_report_target(self) -> ReportTarget:
+        """解析 QQ 官方群聊或私聊的完整会话目标。
 
         Returns:
-            目标 group_openid 与明确的平台实例 ID。
+            明确的平台实例及群聊或私聊目标。
 
         Raises:
-            ValueError: 目标为空、不是群会话或未指定平台实例。
+            ValueError: 会话无效或频道私聊缺少来源频道。
         """
-        raw_target: object = self._get_group("report_delivery").get(
-            "qq_official_target", ""
-        )
+        delivery = self._get_group("report_delivery")
+        raw_target: object = delivery.get("qq_official_target", "")
         if not isinstance(raw_target, str) or not raw_target.strip():
-            raise ValueError("QQ 官方机器人目标群不能为空，请填写目标群的完整 /sid")
-        parts = raw_target.strip().split(":", 2)
+            raise ValueError("QQ 官方机器人目标不能为空，请填写目标会话的完整 /sid")
+        parts = [part.strip() for part in raw_target.strip().split(":", 2)]
         if (
             len(parts) != 3
-            or parts[1] != "GroupMessage"
-            or not parts[0].strip()
-            or not parts[2].strip()
+            or parts[1] not in {"GroupMessage", "FriendMessage"}
+            or not parts[0]
+            or not parts[2]
             or ":" in parts[2]
         ):
             raise ValueError(
-                "QQ 官方目标必须是完整群会话 ID：平台实例ID:GroupMessage:group_openid"
+                "QQ 官方目标必须是完整会话 ID："
+                "平台实例ID:GroupMessage:group_openid 或 "
+                "平台实例ID:FriendMessage:用户ID"
             )
-        return GroupReportTarget(
-            group_id=parts[2].strip(), platform_id=parts[0].strip()
+        if parts[1] == "GroupMessage":
+            return GroupReportTarget(group_id=parts[2], platform_id=parts[0])
+
+        scene: object = delivery.get("qq_official_private_scene", "c2c")
+        if scene not in ("c2c", "guild"):
+            raise ValueError("QQ 官方私聊场景必须是 c2c 或 guild")
+        source_guild_id = ""
+        if scene == "guild":
+            raw_guild_id: object = delivery.get("qq_official_source_guild_id", "")
+            if not isinstance(raw_guild_id, str) or not raw_guild_id.strip():
+                raise ValueError("QQ 官方频道私聊必须填写用户所在的来源频道 ID")
+            source_guild_id = raw_guild_id.strip()
+        return QQOfficialPrivateTarget(
+            user_id=parts[2],
+            platform_id=parts[0],
+            scene="guild" if scene == "guild" else "c2c",
+            source_guild_id=source_guild_id,
         )
 
     def get_serverchan_bot_config(self) -> ServerChanBotConfig:

@@ -242,10 +242,26 @@
             },
             "qq_official_target": {
                 "type": "string",
-                "description": "QQ 官方机器人目标群会话",
+                "description": "QQ 官方机器人目标会话（群聊或私聊）",
                 "default": "",
                 "condition": {"qq_official_enabled": true},
-                "hint": "在目标群通过要使用的 QQ 官方机器人执行 /sid，粘贴完整结果，例如 qq-official-main:GroupMessage:目标群group_openid。必须填写实际平台实例 ID 和 group_openid，不能只填QQ群号或协议类型；无需在插件重复填写 AppID/密钥。目标不能是原群，主动发送权限和额度由 QQ 开放平台决定。"
+                "hint": "通过要使用的 QQ 官方机器人在目标群聊或私聊执行 /sid，粘贴完整结果。群聊示例：qq-official-main:GroupMessage:group_openid；私聊示例：qq-official-main:FriendMessage:用户ID。必须填写实际平台实例 ID，无需重复填写 AppID/密钥。私聊还需选择下方场景；群聊目标不能是原群。主动发送权限和额度由 QQ 开放平台决定。"
+            },
+            "qq_official_private_scene": {
+                "type": "string",
+                "description": "QQ 官方私聊场景",
+                "default": "c2c",
+                "options": ["c2c", "guild"],
+                "labels": ["消息列表单聊（C2C）", "频道私聊（Guild DM）"],
+                "condition": {"qq_official_enabled": true},
+                "hint": "仅对 FriendMessage 目标生效。消息列表单聊复用 AstrBot 的私聊发送能力；频道私聊需填写来源频道 ID。请在 AstrBot 接入设置中启用对应私聊功能，并先在该场景正常联系机器人获取 /sid。"
+            },
+            "qq_official_source_guild_id": {
+                "type": "string",
+                "description": "QQ 官方频道私聊的来源频道 ID",
+                "default": "",
+                "condition": {"qq_official_enabled": true, "qq_official_private_scene": "guild"},
+                "hint": "填写机器人和目标用户共同所在的来源频道 guild_id，用于创建私信会话。它不是子频道 channel_id，也不是创建后返回的私信会话 ID。群聊和 C2C 不需要填写；来源频道或权限无效时该通道失败，不会回发原群。"
             },
             "serverchan_enabled": {
                 "type": "bool",
