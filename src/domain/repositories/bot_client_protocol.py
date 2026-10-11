@@ -411,6 +411,19 @@ class QQOfficialApiProtocol(Protocol):
 
 
 @runtime_checkable
+class QQOfficialGuildApiProtocol(Protocol):
+    """AstrBot 已认证 QQ 客户端的频道私聊 API。"""
+
+    async def create_dms(self, guild_id: str, user_id: str) -> object:
+        """通过来源频道和用户创建或获取私信会话。"""
+        ...
+
+    async def post_dms(self, guild_id: str, **params: object) -> object:
+        """向私信会话发送消息。"""
+        ...
+
+
+@runtime_checkable
 class QQOfficialBotProtocol(Protocol):
     """QQ 官方机器人客户端行为协议。"""
 
