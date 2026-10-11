@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.application.handlers.comic_command_handler import ComicCommandHandler
+from src.domain.value_objects.report_delivery import QQOfficialPrivateTarget
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.platform.bot_manager import BotManager
 from src.shared.trace_context import _current_trace
@@ -601,6 +602,7 @@ def official_comic_rig(comic_rig):
         platform_id="official-main",
         get_platform_name=Mock(return_value="qq_official"),
         send_image=AsyncMock(return_value=True),
+        send_private_image=AsyncMock(return_value=True),
     )
     rig.source.get_platform_name = Mock(return_value="onebot")
     rig.target.get_platform_name = Mock(return_value="onebot")
@@ -789,3 +791,113 @@ async def test_stop_source_skips_manual_comic_before_topic_analysis(comic_rig):
     rig.source.send_image.assert_not_awaited()
     rig.target.send_image.assert_not_awaited()
     assert not rig.handler._background_tasks
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.parametrize("output", ["bytes", "url"])
+@pytest.mark.parametrize("require_auto", [False, True])
+@pytest.mark.asyncio
+async def test_private_comic_keeps_source_archive_and_skips_all_group_uploads(
+    official_comic_rig, scene, output, require_auto
+):
+    rig = official_comic_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+    target = rig.config.get_qq_official_report_target()
+    set_output(rig, output)
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP,
+            SOURCE_PLATFORM,
+            {"topics": TOPICS},
+            require_auto_enabled=require_auto,
+        )
+        == "started"
+    )
+    await asyncio.gather(*tuple(rig.handler._background_tasks))
+    rig.comic_service.generate_comic.assert_awaited_once_with(
+        TOPICS, SOURCE_GROUP, SOURCE_UMO
+    )
+    rig.official.send_private_image.assert_awaited_once()
+    sent_target, image = rig.official.send_private_image.await_args.args
+    assert sent_target == target
+    if output == "bytes":
+        image_path = Path(image)
+        assert image_path.name.startswith(f"comic_{SOURCE_GROUP}_")
+        assert image_path.read_bytes() == PNG_BYTES
+    else:
+        assert image == IMAGE_URL
+    rig.official.send_image.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.parametrize("failure", ["rejected", "exception"])
+@pytest.mark.asyncio
+async def test_private_comic_failure_never_sends_to_group(
+    official_comic_rig, scene, failure
+):
+    rig = official_comic_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+    if failure == "exception":
+        rig.official.send_private_image.side_effect = RuntimeError("模拟私聊拒绝")
+    else:
+        rig.official.send_private_image.return_value = False
+    await generate(rig)
+    rig.official.send_private_image.assert_awaited_once()
+    rig.official.send_image.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.asyncio
+async def test_private_comic_rechecks_target_after_drawing(official_comic_rig, scene):
+    rig = official_comic_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target="official-main:FriendMessage:old-user",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+
+    async def draw(*_args):
+        rig.settings["qq_official_target"] = "official-main:FriendMessage:new-user"
+        return PNG_BYTES, None
+
+    rig.comic_service.generate_comic.side_effect = draw
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP,
+            SOURCE_PLATFORM,
+            {"topics": TOPICS},
+            require_auto_enabled=True,
+        )
+        == "started"
+    )
+    await asyncio.gather(*tuple(rig.handler._background_tasks))
+    assert rig.official.send_private_image.await_args.args[
+        0
+    ] == QQOfficialPrivateTarget(
+        "new-user",
+        "official-main",
+        scene,
+        "source-guild" if scene == "guild" else "",
+    )
+    rig.official.send_image.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()

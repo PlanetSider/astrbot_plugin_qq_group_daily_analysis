@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.application.handlers.analysis_command_handler import AnalysisCommandHandler
-from src.domain.value_objects.report_delivery import GroupReportTarget
+from src.domain.value_objects.report_delivery import (
+    GroupReportTarget,
+    QQOfficialPrivateTarget,
+)
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.config.config_migrator import ConfigMigrator
 from src.infrastructure.platform.bot_manager import BotManager
@@ -42,6 +45,10 @@ def delivery_rig(tmp_path):
             platform_id=platform_id,
             get_platform_name=Mock(return_value=name),
             send_text_report=AsyncMock(return_value=True),
+            send_private_text_report=AsyncMock(return_value=True),
+            send_private_text=AsyncMock(return_value=True),
+            send_private_image=AsyncMock(return_value=True),
+            send_private_file=AsyncMock(return_value=True),
         )
 
     source = adapter("source-platform", "onebot")
@@ -154,7 +161,7 @@ def test_new_switches_require_boolean_values(delivery_rig, key, value):
         None,
         123,
         "123456",
-        "official-main:FriendMessage:123",
+        "official-main:UnknownMessage:123",
         ":GroupMessage:123",
         "official-main:GroupMessage:",
         "official-main:GroupMessage:123:456",
@@ -437,3 +444,228 @@ def test_old_destination_migration_preserves_stop_switch_and_official_default(
     expected = "disabled" if destination == "source_group" else destination
     assert rig.config.get_report_delivery_mode() == expected
     assert migrator.migrate_legacy_configs() is False
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+def test_private_target_preserves_user_scene_and_normalizes_instance(
+    delivery_rig, scene
+):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target=" OFFICIAL-MAIN:FriendMessage: source-group ",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id=" source-guild ",
+    )
+    target = rig.config.get_qq_official_report_target()
+    validated = rig.manager.validate_qq_official_report_target(
+        target, "source-group", "official-main"
+    )
+    assert validated == QQOfficialPrivateTarget(
+        "source-group",
+        "official-main",
+        scene,
+        "source-guild" if scene == "guild" else "",
+    )
+
+
+def test_friend_session_defaults_to_c2c_without_source_guild(delivery_rig):
+    rig = delivery_rig
+    rig.settings["qq_official_target"] = "official-main:FriendMessage:user-openid"
+    assert rig.config.get_qq_official_report_target() == QQOfficialPrivateTarget(
+        "user-openid", "official-main"
+    )
+
+
+@pytest.mark.parametrize("scene", [None, True, 123, "unknown", ""])
+def test_private_target_rejects_invalid_scene(delivery_rig, scene):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+    )
+    with pytest.raises(ValueError, match="私聊场景"):
+        rig.config.get_qq_official_report_target()
+
+
+@pytest.mark.parametrize("guild_id", ["", " ", None, 123])
+def test_guild_private_target_requires_source_guild(delivery_rig, guild_id):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_target="official-main:FriendMessage:guild-user",
+        qq_official_private_scene="guild",
+        qq_official_source_guild_id=guild_id,
+    )
+    with pytest.raises(ValueError, match="来源频道"):
+        rig.config.get_qq_official_report_target()
+
+
+@pytest.mark.parametrize("platform", ["missing", "target-platform", "qq_official"])
+def test_private_target_rejects_missing_wrong_or_alias_instance(delivery_rig, platform):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target=f"{platform}:FriendMessage:user-openid",
+    )
+    assert (
+        asyncio.run(rig.dispatcher.dispatch("source-group", {}, "source-platform"))
+        is False
+    )
+    rig.official.send_private_text_report.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+    rig.sender.send_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.parametrize("output", ["text", "image", "html", "html_url"])
+def test_private_reports_use_private_hooks_and_keep_source_archive(
+    delivery_rig, scene, output
+):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+    target = rig.config.get_qq_official_report_target()
+    html_path = rig.data_dir / "source-group.html"
+    html_path.write_text("<html>源群总结</html>", encoding="utf-8")
+    rig.generator.generate_image_report.return_value = (
+        "https://example.com/report.png",
+        None,
+    )
+    rig.generator.generate_html_report.return_value = (str(html_path), None)
+    rig.config.get_html_only_url = Mock(return_value=output == "html_url")
+    rig.config.get_html_base_url = Mock(return_value="https://reports.example.com")
+    rig.config.get_html_output_dir = Mock(return_value=str(rig.data_dir))
+    hook = {
+        "text": rig.official.send_private_text_report,
+        "image": rig.official.send_private_image,
+        "html": rig.official.send_private_file,
+        "html_url": rig.official.send_private_text,
+    }[output]
+    assert (
+        asyncio.run(
+            rig.dispatcher.dispatch(
+                "source-group",
+                {},
+                "source-platform",
+                output_formats=["html" if output == "html_url" else output],
+            )
+        )
+        is True
+    )
+    hook.assert_awaited_once()
+    assert hook.await_args.args[0] == target
+    if output == "html_url":
+        assert (
+            "https://reports.example.com/source-group.html" in hook.await_args.args[1]
+        )
+        rig.official.send_private_file.assert_not_awaited()
+    elif output == "html":
+        assert hook.await_args.args[1:] == (str(html_path), html_path.name)
+    rig.generator.generate_markdown_report.assert_not_awaited()
+    rig.official.send_text_report.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+    rig.sender.send_text.assert_not_awaited()
+    rig.sender.send_image_smart.assert_not_awaited()
+    rig.sender.send_file.assert_not_awaited()
+    rig.dispatcher._try_upload_image.assert_not_awaited()
+    payloads = [
+        span["payload"]
+        for span in rig.trace._spans
+        if "target_scene" in span["payload"]
+    ]
+    assert payloads
+    assert all(payload["target_scene"] == scene for payload in payloads)
+    assert all(payload["target_user_id"] == "user-openid" for payload in payloads)
+    assert all("target_group_id" not in payload for payload in payloads)
+    assert rig.trace.group_id == "source-group"
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.parametrize("output", ["image", "html"])
+@pytest.mark.parametrize("text_success", [True, False])
+def test_private_attachment_failure_falls_back_only_to_same_private_target(
+    delivery_rig, scene, output, text_success
+):
+    rig = delivery_rig
+    rig.settings.update(
+        qq_official_enabled=True,
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+    target = rig.config.get_qq_official_report_target()
+    html_path = rig.data_dir / "source-group.html"
+    html_path.write_text("报告", encoding="utf-8")
+    rig.generator.generate_image_report.return_value = (
+        "https://example.com/report.png",
+        None,
+    )
+    rig.generator.generate_html_report.return_value = (str(html_path), None)
+    rig.official.send_private_image.return_value = False
+    rig.official.send_private_file.return_value = False
+    rig.official.send_private_text_report.return_value = text_success
+    assert (
+        asyncio.run(
+            rig.dispatcher.dispatch(
+                "source-group",
+                {},
+                "source-platform",
+                output_formats=[output],
+            )
+        )
+        is text_success
+    )
+    attachment_hook = (
+        rig.official.send_private_image
+        if output == "image"
+        else rig.official.send_private_file
+    )
+    attachment_hook.assert_awaited_once()
+    assert attachment_hook.await_args.args[0] == target
+    rig.official.send_private_text_report.assert_awaited_once_with(
+        target, "源群总结正文"
+    )
+    rig.official.send_text_report.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+    rig.sender.send_text.assert_not_awaited()
+    rig.sender.send_image_smart.assert_not_awaited()
+    rig.sender.send_file.assert_not_awaited()
+    rig.dispatcher._try_upload_image.assert_not_awaited()
+
+
+@pytest.mark.parametrize("scene", ["c2c", "guild"])
+@pytest.mark.parametrize("failure", ["rejected", "exception"])
+def test_private_failure_does_not_block_other_channels_or_send_to_groups(
+    delivery_rig, scene, failure
+):
+    rig = delivery_rig
+    rig.settings.update(
+        forward_group_enabled=True,
+        qq_official_enabled=True,
+        serverchan_enabled=True,
+        qq_official_target="official-main:FriendMessage:user-openid",
+        qq_official_private_scene=scene,
+        qq_official_source_guild_id="source-guild",
+    )
+    if failure == "exception":
+        rig.official.send_private_text_report.side_effect = RuntimeError("模拟私聊拒绝")
+    else:
+        rig.official.send_private_text_report.return_value = False
+    assert (
+        asyncio.run(rig.dispatcher.dispatch("source-group", {}, "source-platform"))
+        is True
+    )
+    assert rig.trace.metadata["report_delivery_results"] == {
+        "group": True,
+        "qq_official": False,
+        "serverchan": True,
+    }
+    rig.target.send_text_report.assert_awaited_once()
+    rig.dispatcher.serverchan_sender.send_summary.assert_awaited_once()
+    rig.official.send_text_report.assert_not_awaited()
+    rig.source.send_text_report.assert_not_awaited()
+    rig.sender.send_text.assert_not_awaited()
