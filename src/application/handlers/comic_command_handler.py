@@ -15,6 +15,8 @@ from ...domain.value_objects.report_delivery import (
     FORWARD_GROUP_DELIVERY_MODES,
     QQ_OFFICIAL_DELIVERY_MODES,
     GroupReportTarget,
+    QQOfficialPrivateTarget,
+    ReportTarget,
 )
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
@@ -332,7 +334,7 @@ class ComicCommandHandler:
 
     def _resolve_delivery_target(
         self, group_id: str, platform_id: str | None
-    ) -> GroupReportTarget | None:
+    ) -> ReportTarget | None:
         """解析漫画唯一投递目标并拒绝原群转发别名。
 
         Args:
@@ -340,7 +342,7 @@ class ComicCommandHandler:
             platform_id: 源群平台实例 ID。
 
         Returns:
-            群投递目标；停止投递或仅 Server酱文本通道时返回 None。
+            群聊或私聊投递目标；停止投递或仅 Server酱文本通道时返回 None。
 
         Raises:
             ValueError: 投递配置无效或转发目标实际为原群。
@@ -421,8 +423,13 @@ class ComicCommandHandler:
             return "delivery_disabled"
 
         if trace:
-            trace.metadata["comic_target_group_id"] = delivery_target.group_id
             trace.metadata["comic_target_platform"] = delivery_target.platform_id or ""
+            if isinstance(delivery_target, QQOfficialPrivateTarget):
+                trace.metadata["comic_target_user_id"] = delivery_target.user_id
+                trace.metadata["comic_target_scene"] = delivery_target.scene
+            else:
+                trace.metadata["comic_target_group_id"] = delivery_target.group_id
+                trace.metadata["comic_target_scene"] = "group"
 
         umo = f"{platform_id}:GroupMessage:{group_id}" if platform_id else group_id
         inherit_allowed = True if require_auto_enabled else None
@@ -576,17 +583,28 @@ class ComicCommandHandler:
                     )
                     return
                 if cur_trace:
-                    cur_trace.metadata["comic_target_group_id"] = target.group_id
                     cur_trace.metadata["comic_target_platform"] = (
                         target.platform_id or ""
                     )
+                    if isinstance(target, QQOfficialPrivateTarget):
+                        cur_trace.metadata.pop("comic_target_group_id", None)
+                        cur_trace.metadata["comic_target_user_id"] = target.user_id
+                        cur_trace.metadata["comic_target_scene"] = target.scene
+                    else:
+                        cur_trace.metadata.pop("comic_target_user_id", None)
+                        cur_trace.metadata["comic_target_group_id"] = target.group_id
+                        cur_trace.metadata["comic_target_scene"] = "group"
 
-                if comic_bytes:
-                    caption = (
-                        TraceContext.make_report_caption()
-                        if self.config_manager.get_show_report_caption()
-                        else ""
+                caption = (
+                    TraceContext.make_report_caption()
+                    if comic_bytes and self.config_manager.get_show_report_caption()
+                    else ""
+                )
+                if isinstance(target, QQOfficialPrivateTarget):
+                    sent = await adapter.send_private_image(
+                        target, image_url, caption=caption
                     )
+                elif comic_bytes:
                     sent = await adapter.send_image(
                         target.group_id, image_url, caption=caption
                     )
@@ -594,10 +612,10 @@ class ComicCommandHandler:
                     sent = await adapter.send_image(target.group_id, image_url)
                 if not sent:
                     logger.warning(
-                        f"漫画投递失败（目标群 {target.group_id}），不会回发原群。"
+                        f"漫画投递失败（目标会话 {target.session_id}），不会回发原群。"
                     )
                     return
-                if not comic_bytes:
+                if isinstance(target, QQOfficialPrivateTarget) or not comic_bytes:
                     return
 
                 if self._resolve_delivery_target(group_id, platform_id) != target:
