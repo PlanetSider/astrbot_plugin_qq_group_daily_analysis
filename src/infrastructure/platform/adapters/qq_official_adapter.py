@@ -476,8 +476,13 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
         return await self._send_private_chain(target, chain)
 
     async def send_private_file(
-        self, target: QQOfficialPrivateTarget, file_path: str, file_name: str
+        self,
+        target: QQOfficialPrivateTarget,
+        file_path: str,
+        file_name: str,
+        caption: str = "",
     ) -> bool:
+        """通过同一私聊消息链发送附件及来源说明。"""
         if target.scene == "guild":
             return False
         from astrbot.api.event import MessageChain
@@ -489,7 +494,10 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
             if file_path.startswith(("http://", "https://"))
             else File(name=name, file=os.path.abspath(file_path))
         )
-        return await self._send_private_chain(target, MessageChain([component]))
+        chain = MessageChain([component])
+        if caption:
+            chain.message(caption)
+        return await self._send_private_chain(target, chain)
 
     async def send_text(
         self, group_id: str, text: str, reply_to: str | None = None

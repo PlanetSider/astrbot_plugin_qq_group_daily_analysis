@@ -295,3 +295,28 @@ def test_invalid_guild_image_does_not_send_or_switch_scene(private_adapter_rig):
     rig.api.post_dms.assert_not_awaited()
     rig.context.send_message.assert_not_awaited()
     rig.adapter._send_chain.assert_not_awaited()
+
+
+@pytest.mark.parametrize("caption", ["", "来源群：讨论群（123456）"])
+def test_c2c_attachment_and_source_caption_share_host_message_chain(
+    private_adapter_rig, tmp_path, caption
+):
+    rig = private_adapter_rig
+    path = tmp_path / "report.html"
+    path.write_text("报告", encoding="utf-8")
+    assert (
+        asyncio.run(
+            rig.adapter.send_private_file(
+                rig.c2c, str(path), path.name, caption=caption
+            )
+        )
+        is True
+    )
+    session, chain = rig.context.send_message.await_args.args
+    assert session == "official-main:FriendMessage:user-openid"
+    assert chain.parts[0].name == path.name
+    assert chain.parts[0].file == str(path.resolve())
+    assert chain.parts[1:] == ([("text", caption)] if caption else [])
+    rig.api.create_dms.assert_not_awaited()
+    rig.api.post_group_message.assert_not_awaited()
+    rig.adapter._send_chain.assert_not_awaited()

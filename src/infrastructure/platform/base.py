@@ -316,9 +316,13 @@ class PlatformAdapter(
         return False
 
     async def send_private_file(
-        self, target: QQOfficialPrivateTarget, file_path: str, file_name: str
+        self,
+        target: QQOfficialPrivateTarget,
+        file_path: str,
+        file_name: str,
+        caption: str = "",
     ) -> bool:
-        """向私聊发送文件，不使用群文件上传。"""
+        """向私聊发送文件及说明，不使用群文件上传。"""
         return False
 
     async def is_group_muted(self, group_id: str) -> bool:
