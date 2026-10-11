@@ -2,7 +2,7 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.3-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.4-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
@@ -201,6 +201,8 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 **开启任一通道后停止向原群发送总结，失败也不会回发原群。** 指定群和 QQ 官方通道按原设置发送图片、文本或 HTML，具体能力由目标平台和场景决定，不支持的格式会在同一目标会话内回退为文本。群文件和相册备份仅对支持这些能力的群聊目标使用；QQ 官方和私聊目标不使用 OneBot 群文件与群相册备份。Server酱独立发送文本总结，不受 `basic.output_format` 的图片或 HTML 设置限制。升级时，旧版 `report_delivery.destination` 的原群、指定群或 Server酱设置会自动转换成对应开关，原有目标群与机器人凭据保留；QQ 官方新增开关默认关闭。
 
 这些配置适用于手动 `/群分析`、定时报告、增量最终报告、立即增量报告，以及控制台或 LLM 工具请求发送的报告。手动报告继续只使用首个输出格式，定时报告继续依次发送所选格式。报告的分析数据、头像、HTML 命名和历史归档仍属于原群。
+
+**外发总结和漫画会自动标明来源群**，例如 `来源群：技术交流群（123456）`。指定群、QQ 官方群聊与私聊、Server酱文本都使用被分析群的名称和群 ID；文本放在正文开头，图片、漫画、HTML 文件及外链附带来源说明，格式失败后的文本回退也保留该标识。来源说明不受“显示报告发送文案”开关影响。优先使用分析任务中已确认的群名，缺失时向源群平台查询；无法获取名称时显示 `来源群：123456`，仍可用群 ID 区分报告。发送回原群时沿用原有显示方式。
 
 多个通道同时开启时，插件分别尝试投递；一路配置错误、平台离线、超时或发送失败不会阻断其他通道。每路结果会单独记录，至少一路发送成功即视为已送达，部分失败会记录警告；不会自动重试整份报告，避免已成功的通道重复收到总结。所有已开启通道都失败时记录投递失败，**不会回发原群**。
 
