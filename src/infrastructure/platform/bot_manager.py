@@ -10,7 +10,11 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, TypeGuard
 
-from ...domain.value_objects.report_delivery import GroupReportTarget
+from ...domain.value_objects.report_delivery import (
+    GroupReportTarget,
+    QQOfficialPrivateTarget,
+    ReportTarget,
+)
 from ...shared.constants import PLUGIN_NAME
 from ...utils.logger import logger
 from . import PlatformAdapter, PlatformAdapterFactory
@@ -403,19 +407,19 @@ class BotManager:
 
     def validate_qq_official_report_target(
         self,
-        target: GroupReportTarget,
+        target: ReportTarget,
         source_group_id: str,
         source_platform_id: str | None,
-    ) -> GroupReportTarget:
-        """校验 QQ 官方目标并返回规范化的实际平台实例。
+    ) -> ReportTarget:
+        """校验 QQ 官方群聊或私聊目标的实际平台实例。
 
         Args:
-            target: 已解析的目标群会话。
+            target: 已解析的群聊或私聊目标。
             source_group_id: 被分析的源群 ID。
             source_platform_id: 源群所属平台实例 ID。
 
         Returns:
-            使用真实 QQ 官方实例 ID 的目标群。
+            使用真实 QQ 官方实例 ID 的目标。
 
         Raises:
             ValueError: 实例不可用、不是 QQ 官方、仅填写协议别名或目标是原群。
@@ -423,12 +427,19 @@ class BotManager:
         requested_id = (target.platform_id or "").strip()
         adapter = self.get_adapter(requested_id)
         if adapter is None:
-            raise ValueError("QQ 官方目标平台未连接，请检查目标群 /sid 中的平台实例 ID")
+            raise ValueError("QQ 官方目标平台未连接，请检查目标 /sid 中的平台实例 ID")
         if adapter.get_platform_name() != "qq_official":
             raise ValueError("QQ 官方投递目标必须使用 AstrBot 已接入的 QQ 官方机器人")
         actual_id = self.get_adapter_platform_id(adapter).strip()
         if not requested_id or actual_id.casefold() != requested_id.casefold():
             raise ValueError("QQ 官方目标必须填写实际平台实例 ID，不能仅填写协议类型")
+        if isinstance(target, QQOfficialPrivateTarget):
+            return QQOfficialPrivateTarget(
+                user_id=target.user_id,
+                platform_id=actual_id,
+                scene=target.scene,
+                source_guild_id=target.source_guild_id,
+            )
         if target.group_id == source_group_id:
             source_adapter = self.get_adapter(source_platform_id)
             source_id = (

@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from ....domain.repositories.bot_client_protocol import QQOfficialGuildApiProtocol
 from ....domain.repositories.plugin_host_repository import PluginHostProtocol
 from ....domain.value_objects.platform_capabilities import (
     QQ_OFFICIAL_CAPABILITIES,
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
         QQOfficialBotProtocol,
     )
     from ....domain.value_objects.analysis_results import QQOfficialMemberProfile
+    from ....domain.value_objects.report_delivery import QQOfficialPrivateTarget
 
 
 class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
@@ -352,6 +354,142 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
         except Exception as exc:
             logger.error("[QQOfficial] 发送消息失败: %s", exc, exc_info=True)
             return False
+
+    async def _send_private_chain(
+        self, target: QQOfficialPrivateTarget, chain: MessageChain
+    ) -> bool:
+        """通过已认证宿主实例发送私聊，保持群聊与私聊场景分离。
+
+        C2C 使用 Context.send_message；频道私聊复用宿主消息链解析器及
+        QQ 客户端，先创建私信会话，再使用返回的私信 ID 发送。
+
+        Args:
+            target: 已校验的私聊用户、平台实例及来源频道。
+            chain: 待发送的 AstrBot 消息链。
+
+        Returns:
+            发送成功时返回 True；能力缺失、无效会话或平台拒绝时返回 False。
+        """
+        if target.scene == "c2c":
+            if not self._context:
+                logger.error("[QQOfficial] 未设置 context，无法发送 C2C 私聊")
+                return False
+            try:
+                platform = self.bot.platform if self.bot else None
+                if platform and hasattr(platform, "remember_session_scene"):
+                    platform.remember_session_scene(target.user_id, "friend")
+                umo = f"{target.platform_id}:FriendMessage:{target.user_id}"
+                return bool(await self._context.send_message(umo, chain))
+            except Exception as exc:
+                logger.error("[QQOfficial] C2C 私聊发送失败：%s", exc, exc_info=True)
+                return False
+
+        api = self.bot.api if self.bot else None
+        if (
+            target.scene != "guild"
+            or not target.source_guild_id
+            or not isinstance(api, QQOfficialGuildApiProtocol)
+        ):
+            logger.error("[QQOfficial] QQ API 或来源频道不支持频道私聊")
+            return False
+        try:
+            from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
+                QQOfficialMessageEvent,
+            )
+
+            (
+                plain_text,
+                image_base64,
+                image_file_path,
+                record_file_path,
+                video_file_source,
+                file_source,
+                _file_name,
+            ) = await QQOfficialMessageEvent._parse_to_qqofficial(chain)
+            if record_file_path or video_file_source or file_source:
+                logger.warning("[QQOfficial] 频道私聊不支持此报告附件，交由文本回退")
+                return False
+            if not plain_text and not image_base64 and not image_file_path:
+                return False
+            dms = await api.create_dms(
+                guild_id=target.source_guild_id, user_id=target.user_id
+            )
+            raw_session_id = (
+                dms.get("guild_id")
+                if isinstance(dms, Mapping)
+                else getattr(dms, "guild_id", None)
+            )
+            if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+                logger.error("[QQOfficial] 创建频道私聊会话未返回有效会话 ID")
+                return False
+            session_id = raw_session_id.strip()
+            payload: dict[str, object] = {"content": plain_text}
+            if image_file_path:
+                payload["file_image"] = image_file_path
+            elif image_base64:
+                payload["file_image"] = base64.b64decode(image_base64, validate=True)
+            result = await api.post_dms(guild_id=session_id, **payload)
+            return bool(result)
+        except Exception as exc:
+            logger.error("[QQOfficial] 频道私聊发送失败：%s", exc, exc_info=True)
+            return False
+
+    async def send_private_text(
+        self, target: QQOfficialPrivateTarget, text: str
+    ) -> bool:
+        from astrbot.api.event import MessageChain
+
+        return await self._send_private_chain(target, MessageChain().message(str(text)))
+
+    async def send_private_text_report(
+        self,
+        target: QQOfficialPrivateTarget,
+        content: str,
+        fallback_content: str | None = None,
+    ) -> bool:
+        """分段发送私聊普通文本，部分失败时不重发已成功的片段。"""
+        report = str(fallback_content or content or "").strip()
+        if not report:
+            return False
+        for chunk in self._split_markdown_report(report):
+            if not await self.send_private_text(target, chunk):
+                return False
+        return True
+
+    async def send_private_image(
+        self, target: QQOfficialPrivateTarget, image: str, caption: str = ""
+    ) -> bool:
+        """复用 AstrBot 消息链解析并保持私聊场景。"""
+        from astrbot.api.event import MessageChain
+
+        chain = MessageChain()
+        if caption:
+            chain.message(caption)
+        if image.startswith("base64://"):
+            chain.base64_image(image[len("base64://") :])
+        elif image.startswith("data:") and "," in image:
+            chain.base64_image(image.split(",", 1)[1])
+        elif image.startswith(("http://", "https://")):
+            chain.url_image(image)
+        else:
+            chain.file_image(os.path.abspath(image))
+        return await self._send_private_chain(target, chain)
+
+    async def send_private_file(
+        self, target: QQOfficialPrivateTarget, file_path: str, file_name: str
+    ) -> bool:
+        if target.scene == "guild":
+            return False
+        from astrbot.api.event import MessageChain
+        from astrbot.core.message.components import File
+
+        name = file_name or os.path.basename(file_path) or "report"
+        component = (
+            File(name=name, url=file_path)
+            if file_path.startswith(("http://", "https://"))
+            else File(name=name, file=os.path.abspath(file_path))
+        )
+        return await self._send_private_chain(target, MessageChain([component]))
 
     async def send_text(
         self, group_id: str, text: str, reply_to: str | None = None
