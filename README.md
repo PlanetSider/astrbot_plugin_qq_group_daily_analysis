@@ -2,7 +2,7 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.2-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.3-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
@@ -191,14 +191,14 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 | --- | --- | --- | --- | --- |
 | 关闭（默认） | 关闭（默认） | 关闭（默认） | 原群 | 原群 |
 | 开启 | 关闭 | 关闭 | 仅指定群 | 仅指定群 |
-| 关闭 | 开启 | 关闭 | 仅 QQ 官方目标群 | 仅 QQ 官方目标群 |
+| 关闭 | 开启 | 关闭 | 仅 QQ 官方目标会话 | 仅 QQ 官方目标会话 |
 | 关闭 | 关闭 | 开启 | 仅 Server酱文本总结 | 跳过漫画 |
-| 开启 | 开启 | 关闭 | 指定群 + QQ 官方目标群 | 仅指定群 |
+| 开启 | 开启 | 关闭 | 指定群 + QQ 官方目标会话 | 仅指定群 |
 | 开启 | 关闭 | 开启 | 指定群 + Server酱文本总结 | 仅指定群 |
-| 关闭 | 开启 | 开启 | QQ 官方目标群 + Server酱文本总结 | 仅 QQ 官方目标群 |
-| 开启 | 开启 | 开启 | 指定群 + QQ 官方目标群 + Server酱文本总结 | 仅指定群 |
+| 关闭 | 开启 | 开启 | QQ 官方目标会话 + Server酱文本总结 | 仅 QQ 官方目标会话 |
+| 开启 | 开启 | 开启 | 指定群 + QQ 官方目标会话 + Server酱文本总结 | 仅指定群 |
 
-**开启任一通道后停止向原群发送总结，失败也不会回发原群。** 指定群和 QQ 官方通道按原设置发送图片、文本或 HTML，具体能力由目标平台决定，不支持的格式会在目标群内回退为文本。群文件和相册备份仅在目标平台支持时使用，QQ 官方不支持 OneBot 群文件与群相册备份。Server酱独立发送文本总结，不受 `basic.output_format` 的图片或 HTML 设置限制。升级时，旧版 `report_delivery.destination` 的原群、指定群或 Server酱设置会自动转换成对应开关，原有目标群与机器人凭据保留；QQ 官方新增开关默认关闭。
+**开启任一通道后停止向原群发送总结，失败也不会回发原群。** 指定群和 QQ 官方通道按原设置发送图片、文本或 HTML，具体能力由目标平台和场景决定，不支持的格式会在同一目标会话内回退为文本。群文件和相册备份仅对支持这些能力的群聊目标使用；QQ 官方和私聊目标不使用 OneBot 群文件与群相册备份。Server酱独立发送文本总结，不受 `basic.output_format` 的图片或 HTML 设置限制。升级时，旧版 `report_delivery.destination` 的原群、指定群或 Server酱设置会自动转换成对应开关，原有目标群与机器人凭据保留；QQ 官方新增开关默认关闭。
 
 这些配置适用于手动 `/群分析`、定时报告、增量最终报告、立即增量报告，以及控制台或 LLM 工具请求发送的报告。手动报告继续只使用首个输出格式，定时报告继续依次发送所选格式。报告的分析数据、头像、HTML 命名和历史归档仍属于原群。
 
@@ -215,12 +215,21 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 ### 通过 AstrBot 已添加的 QQ 官方机器人发送
 
-1. 在 AstrBot 中添加并启用 QQ 官方机器人或 QQ 官方 Webhook，确保它在目标群内能够正常回复。
-2. 在目标群通过该 QQ 官方机器人执行 `/sid`，复制完整会话 ID，例如 `qq-official-main:GroupMessage:目标群的group_openid`。
-3. 在插件“总结投递”中开启“通过 QQ 官方机器人发送”，将完整会话 ID 粘贴到“QQ 官方机器人目标群会话”（`qq_official_target`）。必须使用实际平台实例 ID；仅填写 `qq_official` 等协议名称不能用来选择机器人。目标群使用 `group_openid`，不能使用普通QQ群号或私聊会话。
-4. 保存配置。插件直接复用 AstrBot 已接入的实例，无需再次填写 AppID、AppSecret 或其他机器人密钥。可以同时开启指定群和 Server酱，各自填写目标。
+1. 在 AstrBot 中添加并启用 QQ 官方机器人或 QQ 官方 Webhook。群聊需能在目标群正常回复；消息列表单聊需启用接入设置中的“启用消息列表单聊”，频道私聊需启用“启用频道私聊”。
+2. 通过要使用的 QQ 官方机器人在目标群聊或私聊执行 `/sid`，复制完整会话 ID，例如群聊 `qq-official-main:GroupMessage:group_openid`，私聊 `qq-official-main:FriendMessage:用户ID`。不同场景的用户 ID 可能不同，请复制实际结果。
+3. 在插件“总结投递”中开启“通过 QQ 官方机器人发送”，将完整会话 ID 粘贴到“QQ 官方机器人目标会话（群聊或私聊）”（`qq_official_target`）。必须使用实际平台实例 ID；仅填写 `qq_official` 等协议名称不能选择机器人，群聊也不能用普通QQ群号代替 `group_openid`。
+4. 私聊目标还需选择 `qq_official_private_scene`：消息列表单聊选 `c2c`（默认）；频道私聊选 `guild`，并填写 `qq_official_source_guild_id`。来源频道 ID 是机器人与目标用户共同所在的频道 `guild_id`，不是子频道 `channel_id`，也不是私信会话 ID。群聊目标忽略这些私聊字段。
+5. 保存配置。插件复用 AstrBot 已认证的实例，无需再次填写 AppID、AppSecret 或其他机器人密钥。可以同时开启指定群和 Server酱，各自填写目标。
 
-建议先使用文本输出确认目标，再按需启用图片。目标必须与原群不同；实例未连接、填写非 QQ 官方实例或主动发送被平台拒绝时，只记录该通道失败并继续其他已开启通道，不会回发原群。主动群消息权限、发送时间窗口和额度以 QQ 开放平台及当前 AstrBot 适配器支持情况为准。
+| QQ 官方目标 | 文本总结 | 图片及漫画 | HTML |
+| --- | --- | --- | --- |
+| `GroupMessage` 群聊 | 保留原有 Markdown 报告 | 群消息 | 外链或平台支持的附件，失败回退文本 |
+| `FriendMessage` + `c2c` 消息列表单聊 | 完整普通文本，长报告分段 | 复用 AstrBot 私聊消息链 | 外链或私聊文件，失败回退文本 |
+| `FriendMessage` + `guild` 频道私聊 | 完整普通文本，长报告分段 | 复用已认证 QQ 客户端私信 API | 外链；HTML 附件不受支持时回退文本 |
+
+C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用来源频道和用户创建私信会话，再向返回的私信会话 ID 发送，不会把来源频道当作发送目标。私聊不使用群 Markdown 的成员提及，不上传群文件或群相册；图片、HTML 失败后的文本仍发给同一私聊目标。
+
+建议先用文本输出确认目标，再按需启用图片。群聊目标必须与原群不同；私聊用户 ID 不会与源群 ID 混用。实例未连接、填写非 QQ 官方实例、来源频道无效或发送被平台拒绝时，只记录该通道失败并继续其他已开启通道，不会回发原群。主动消息权限、发送时间窗口和额度以 QQ 开放平台及当前 AstrBot 适配器支持情况为准；开启接入开关不代表已经获得主动推送权限。
 
 ### 使用 Server酱³ 机器人接收总结
 
@@ -232,7 +241,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 插件使用官方地址 `https://bot-go.apijia.cn/bot<TOKEN>/sendMessage`，请求包含 `chat_id`、`text`、`parse_mode=markdown` 和 `silent`。目前按官方已公开的接口发送文本总结，不调用未文档化的图片或文件接口。只有 HTTP 成功且响应明确为 `ok: true` 才判定该通道投递成功；超时或接口拒绝会记录失败，不会回发原群或自动重试造成重复推送。令牌不会写入推送日志。
 
-群漫画适用于手动 `/群漫画` 和群分析后的自动联动漫画：停止原群开关和三个通道全部关闭时保持向原群发送；开启停止原群开关且三个通道均关闭时跳过漫画；开启指定群时只向指定群发送漫画及平台支持的相册备份；未开启指定群但开启 QQ 官方时只向 QQ 官方目标群发送漫画；只开启 Server酱时跳过漫画，不会向原群发送图片。指定群与 QQ 官方同时开启时，总结分别投递，漫画仍只生成一次并发送指定群；指定群目标无效时取消漫画，不会改发 QQ 官方或原群。漫画总开关、自动联动开关、群名单和去重仍按源群生效，话题提取及本地漫画文件也仍归属源群。排队和绘图期间修改投递配置时，任务在生成前与发送前重新校验群目标；切换为停止投递、仅 Server酱或无效群目标会取消群漫画投递，已经发出的消息无法撤回。
+群漫画适用于手动 `/群漫画` 和群分析后的自动联动漫画：停止原群开关和三个通道全部关闭时保持向原群发送；开启停止原群开关且三个通道均关闭时跳过漫画；开启指定群时只向指定群发送漫画及平台支持的相册备份；未开启指定群但开启 QQ 官方时只向 QQ 官方目标会话发送漫画；只开启 Server酱时跳过漫画，不会向原群发送图片。指定群与 QQ 官方同时开启时，总结分别投递，漫画仍只生成一次并发送指定群；指定群目标无效时取消漫画，不会改发 QQ 官方或原群。漫画总开关、自动联动开关、群名单和去重仍按源群生效，话题提取及本地漫画文件也仍归属源群。排队和绘图期间修改投递配置时，任务在生成前与发送前重新校验群聊或私聊目标；切换为停止投递、仅 Server酱或无效目标会取消漫画投递，已经发出的消息无法撤回。
 
 ## 每日群漫画配置
 
