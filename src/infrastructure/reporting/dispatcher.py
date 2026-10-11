@@ -15,6 +15,8 @@ from ...domain.value_objects.report_delivery import (
     QQ_OFFICIAL_DELIVERY_MODES,
     SERVERCHAN_DELIVERY_MODES,
     GroupReportTarget,
+    QQOfficialPrivateTarget,
+    ReportTarget,
 )
 from ...shared.constants import AnalysisStage
 from ...shared.trace_context import TraceContext
@@ -81,6 +83,23 @@ class ReportDispatcher:
             adapter and adapter.get_platform_name() in self._SHARED_MARKDOWN_PLATFORMS
         )
 
+    @staticmethod
+    def _target_trace_payload(target: ReportTarget) -> dict[str, str]:
+        """生成各报告格式共用的投递目标追踪字段。
+
+        Args:
+            target: 已校验的群聊或 QQ 官方私聊目标。
+
+        Returns:
+            含目标场景及群 ID 或用户 ID 的字段。
+        """
+        if isinstance(target, QQOfficialPrivateTarget):
+            return {
+                "target_scene": target.scene,
+                "target_user_id": target.user_id,
+            }
+        return {"target_scene": "group", "target_group_id": target.group_id}
+
     async def dispatch(
         self,
         group_id: str,
@@ -141,29 +160,32 @@ class ReportDispatcher:
                         if forward_enabled
                         else GroupReportTarget(group_id, platform_id)
                     )
-                if (
-                    forward_enabled
-                    and channel == "group"
-                    and target.group_id == group_id
-                ):
-                    bot_manager = self.message_sender.bot_manager
-                    source_adapter = bot_manager.get_adapter(platform_id)
-                    target_adapter = bot_manager.get_adapter(target.platform_id)
-                    source_id = (
-                        bot_manager.get_adapter_platform_id(source_adapter)
-                        if source_adapter
-                        else ""
-                    )
-                    target_id = (
-                        bot_manager.get_adapter_platform_id(target_adapter)
-                        if target_adapter
-                        else ""
-                    )
-                    if source_adapter is not None and (
-                        source_adapter is target_adapter
-                        or (source_id and source_id.casefold() == target_id.casefold())
+                    if (
+                        channel == "group"
+                        and forward_enabled
+                        and target.group_id == group_id
                     ):
-                        raise ValueError("转发目标不能是原群，请填写另外一个群")
+                        bot_manager = self.message_sender.bot_manager
+                        source_adapter = bot_manager.get_adapter(platform_id)
+                        target_adapter = bot_manager.get_adapter(target.platform_id)
+                        source_id = (
+                            bot_manager.get_adapter_platform_id(source_adapter)
+                            if source_adapter
+                            else ""
+                        )
+                        target_id = (
+                            bot_manager.get_adapter_platform_id(target_adapter)
+                            if target_adapter
+                            else ""
+                        )
+                        if source_adapter is not None and (
+                            source_adapter is target_adapter
+                            or (
+                                source_id
+                                and source_id.casefold() == target_id.casefold()
+                            )
+                        ):
+                            raise ValueError("转发目标不能是原群，请填写另外一个群")
                 channel_results[channel] = await self._dispatch_group_reports(
                     group_id, analysis_result, platform_id, target, output_formats
                 )
@@ -228,10 +250,10 @@ class ReportDispatcher:
         group_id: str,
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
-        target: GroupReportTarget,
+        target: ReportTarget,
         output_formats: list[str] | None,
     ) -> bool:
-        """按源群生成报告，各格式及文本回退只使用已校验的群目标。"""
+        """按源群生成报告，各格式和回退均保留已校验的实际目标。"""
         trace_id = TraceContext.get()
         if output_formats is None:
             output_formats = self.config_manager.get_output_format()
@@ -239,7 +261,7 @@ class ReportDispatcher:
             output_formats = [output_formats]
 
         logger.info(
-            f"[{trace_id}] 正在分发群 {group_id} 的报告到群 {target.group_id} "
+            f"[{trace_id}] 正在分发群 {group_id} 的报告到会话 {target.session_id} "
             f"(格式: {', '.join(output_formats)})"
         )
 
@@ -283,7 +305,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: GroupReportTarget | None = None,
+        target: ReportTarget | None = None,
     ) -> bool:
         trace_id = TraceContext.get()
         trace_ctx = TraceContext.current()
@@ -370,7 +392,7 @@ class ReportDispatcher:
                         "platform": delivery_target.platform_id or "auto",
                         "group_id": group_id,
                         "source_platform": platform_id,
-                        "target_group_id": delivery_target.group_id,
+                        **self._target_trace_payload(delivery_target),
                         "formats": ["image"],
                         "format": "image",
                     },
@@ -456,29 +478,41 @@ class ReportDispatcher:
 
                 dispatch_start_ts = time.perf_counter()
                 try:
-                    sent = await self.message_sender.send_image_smart(
-                        delivery_target.group_id,
-                        image_url,
-                        caption,
-                        delivery_target.platform_id,
-                    )
+                    if isinstance(delivery_target, QQOfficialPrivateTarget):
+                        adapter = self.message_sender.bot_manager.get_adapter(
+                            delivery_target.platform_id
+                        )
+                        sent = bool(
+                            adapter
+                            and await adapter.send_private_image(
+                                delivery_target, image_url, caption=caption
+                            )
+                        )
+                    else:
+                        sent = await self.message_sender.send_image_smart(
+                            delivery_target.group_id,
+                            image_url,
+                            caption,
+                            delivery_target.platform_id,
+                        )
                 except Exception as e:
                     logger.error(f"[{trace_id}] 图片报告发送异常: {e}", exc_info=True)
                 dispatch_api_ms = round(
                     (time.perf_counter() - dispatch_start_ts) * 1000, 2
                 )
 
-                # 5. 尝试上传到群文件/群相册（静默处理）
-                try:
-                    await self._try_upload_image(
-                        delivery_target.group_id,
-                        image_url,
-                        delivery_target.platform_id,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"[{trace_id}] 图片报告备份失败，不影响发送状态: {e}"
-                    )
+                # 5. 群聊才备份到群文件或群相册，私聊严格不调用群接口。
+                if isinstance(delivery_target, GroupReportTarget):
+                    try:
+                        await self._try_upload_image(
+                            delivery_target.group_id,
+                            image_url,
+                            delivery_target.platform_id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{trace_id}] 图片报告备份失败，不影响发送状态: {e}"
+                        )
 
                 if dispatch_span:
                     dispatch_span.setdefault("payload", {}).update(
@@ -521,7 +555,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: GroupReportTarget | None = None,
+        target: ReportTarget | None = None,
     ) -> bool:
         trace_id = TraceContext.get()
         trace_ctx = TraceContext.current()
@@ -598,7 +632,7 @@ class ReportDispatcher:
                         "platform": delivery_target.platform_id or "auto",
                         "group_id": group_id,
                         "source_platform": platform_id,
-                        "target_group_id": delivery_target.group_id,
+                        **self._target_trace_payload(delivery_target),
                         "formats": ["html"],
                         "format": "html",
                     },
@@ -658,11 +692,23 @@ class ReportDispatcher:
                         encoded_url_path = quote(url_path.lstrip("/"), safe="/")
                         report_url = f"{base_url.rstrip('/')}/{encoded_url_path}"
 
-                        sent = await self.message_sender.send_text(
-                            delivery_target.group_id,
-                            f"📊 今日群聊分析报告已生成：\n{report_url}",
-                            delivery_target.platform_id,
-                        )
+                        if isinstance(delivery_target, QQOfficialPrivateTarget):
+                            adapter = self.message_sender.bot_manager.get_adapter(
+                                delivery_target.platform_id
+                            )
+                            sent = bool(
+                                adapter
+                                and await adapter.send_private_text(
+                                    delivery_target,
+                                    f"📊 今日群聊分析报告已生成：\n{report_url}",
+                                )
+                            )
+                        else:
+                            sent = await self.message_sender.send_text(
+                                delivery_target.group_id,
+                                f"📊 今日群聊分析报告已生成：\n{report_url}",
+                                delivery_target.platform_id,
+                            )
                     else:
                         logger.warning(
                             f"[{trace_id}] 群 {group_id} 开启了仅发送外链，但未配置 html_base_url，已进行降级，回退至发送 HTML 文件。"
@@ -674,12 +720,23 @@ class ReportDispatcher:
                         if self.config_manager.get_show_report_caption()
                         else ""
                     )
-                    sent = await self.message_sender.send_file(
-                        delivery_target.group_id,
-                        html_path,
-                        caption=caption,
-                        platform_id=delivery_target.platform_id,
-                    )
+                    if isinstance(delivery_target, QQOfficialPrivateTarget):
+                        adapter = self.message_sender.bot_manager.get_adapter(
+                            delivery_target.platform_id
+                        )
+                        sent = bool(
+                            adapter
+                            and await adapter.send_private_file(
+                                delivery_target, html_path, Path(html_path).name
+                            )
+                        )
+                    else:
+                        sent = await self.message_sender.send_file(
+                            delivery_target.group_id,
+                            html_path,
+                            caption=caption,
+                            platform_id=delivery_target.platform_id,
+                        )
 
                 if dispatch_span:
                     dispatch_span.setdefault("payload", {}).update(
@@ -716,7 +773,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: GroupReportTarget | None = None,
+        target: ReportTarget | None = None,
     ) -> bool:
         """生成源群的文本报告并发送到指定目标。
 
@@ -730,14 +787,16 @@ class ReportDispatcher:
             实际发送成功时返回 True。
         """
         delivery_target = target or GroupReportTarget(group_id, platform_id)
-        logger.info(f"[分发器] 正在向群组 {delivery_target.group_id} 分发文本报告")
+        logger.info(f"[分发器] 正在向会话 {delivery_target.session_id} 分发文本报告")
         trace_ctx = TraceContext.current()
         if not self.report_generator:
             logger.error("[分发器] 报告生成器未初始化，无法生成文本报告。")
             return False
         is_qq_official = self._is_qq_official(delivery_target.platform_id)
         fallback_report = None
-        if is_qq_official:
+        if isinstance(delivery_target, QQOfficialPrivateTarget):
+            text_report = self.report_generator.generate_text_report(analysis_result)
+        elif is_qq_official:
             (
                 text_report,
                 fallback_report,
@@ -765,7 +824,7 @@ class ReportDispatcher:
                 {
                     "platform": delivery_target.platform_id or "auto",
                     "group_id": group_id,
-                    "target_group_id": delivery_target.group_id,
+                    **self._target_trace_payload(delivery_target),
                     "formats": ["text"],
                     "format": "text",
                 },
@@ -775,32 +834,40 @@ class ReportDispatcher:
         ) as dispatch_span:
             sent = False
             try:
-                if adapter:
-                    if is_qq_official:
+                if isinstance(delivery_target, QQOfficialPrivateTarget):
+                    if adapter:
                         sent = bool(
-                            await adapter.send_text_report(
+                            await adapter.send_private_text_report(
+                                delivery_target, text_report
+                            )
+                        )
+                else:
+                    if adapter:
+                        if is_qq_official:
+                            sent = bool(
+                                await adapter.send_text_report(
+                                    delivery_target.group_id,
+                                    text_report,
+                                    fallback_content=fallback_report,
+                                )
+                            )
+                        else:
+                            sent = bool(
+                                await adapter.send_text_report(
+                                    delivery_target.group_id, text_report
+                                )
+                            )
+                    if not sent:
+                        sent = bool(
+                            await self.message_sender.send_text(
                                 delivery_target.group_id,
-                                text_report,
-                                fallback_content=fallback_report,
+                                f"📊 每日群聊分析报告：\n\n{text_report}",
+                                delivery_target.platform_id,
                             )
                         )
-                    else:
-                        sent = bool(
-                            await adapter.send_text_report(
-                                delivery_target.group_id, text_report
-                            )
-                        )
-                if not sent:
-                    sent = bool(
-                        await self.message_sender.send_text(
-                            delivery_target.group_id,
-                            f"📊 每日群聊分析报告：\n\n{text_report}",
-                            delivery_target.platform_id,
-                        )
-                    )
             except Exception as e:
                 logger.error(
-                    f"[分发器] 发送文本报告最终失败。群: {delivery_target.group_id}, 错误: {e}"
+                    f"[分发器] 发送文本报告最终失败。会话: {delivery_target.session_id}, 错误: {e}"
                 )
                 sent = False
 
