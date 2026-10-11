@@ -12,7 +12,7 @@ from src.application.handlers.comic_command_handler import ComicCommandHandler
 from src.domain.value_objects.report_delivery import QQOfficialPrivateTarget
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.platform.bot_manager import BotManager
-from src.shared.trace_context import _current_trace
+from src.shared.trace_context import TraceContext, _current_trace
 
 SOURCE_GROUP = "123456"
 SOURCE_PLATFORM = "source-platform"
@@ -900,4 +900,110 @@ async def test_private_comic_rechecks_target_after_drawing(official_comic_rig, s
     )
     rig.official.send_image.assert_not_awaited()
     rig.source.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("destination", ["forward", "official", "c2c", "guild"])
+@pytest.mark.parametrize("output", ["bytes", "url"])
+@pytest.mark.asyncio
+async def test_external_comic_bytes_and_urls_always_show_source_group(
+    official_comic_rig, destination, output
+):
+    rig = official_comic_rig
+    rig.settings.update(
+        forward_group_enabled=destination == "forward",
+        qq_official_enabled=destination != "forward",
+    )
+    if destination in {"c2c", "guild"}:
+        rig.settings.update(
+            qq_official_target="official-main:FriendMessage:user-openid",
+            qq_official_private_scene=destination,
+            qq_official_source_guild_id="source-guild",
+        )
+    set_output(rig, output)
+    trace = TraceContext(
+        group_id=SOURCE_GROUP, group_name="漫画源群\n第一组", platform=SOURCE_PLATFORM
+    )
+    token = _current_trace.set(trace)
+    try:
+        await generate(rig)
+    finally:
+        _current_trace.reset(token)
+    private = destination in {"c2c", "guild"}
+    hook = (
+        rig.official.send_private_image
+        if private
+        else (rig.target if destination == "forward" else rig.official).send_image
+    )
+    hook.assert_awaited_once()
+    assert (
+        hook.await_args.kwargs["caption"]
+        == f"来源群：漫画源群 第一组（{SOURCE_GROUP}）"
+    )
+    if private:
+        assert hook.await_args.args[0] == rig.config.get_qq_official_report_target()
+        rig.official.send_image.assert_not_awaited()
+        rig.target.upload_group_album.assert_not_awaited()
+    else:
+        assert hook.await_args.args[0] == (
+            TARGET_GROUP if destination == "forward" else "official-group"
+        )
+    if output == "url":
+        assert hook.await_args.args[1] == IMAGE_URL
+    else:
+        path = Path(hook.await_args.args[1])
+        assert path.name.startswith(f"comic_{SOURCE_GROUP}_")
+        assert path.read_bytes() == PNG_BYTES
+    rig.source.get_group_info.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("lookup", ["api", "missing", "exception"])
+@pytest.mark.asyncio
+async def test_comic_source_lookup_failure_keeps_group_identifier(comic_rig, lookup):
+    rig = comic_rig
+    set_output(rig, "url")
+    rig.source.get_group_info.return_value = SimpleNamespace(group_name="API漫画源群")
+    if lookup == "missing":
+        rig.source.get_group_info.return_value = None
+    elif lookup == "exception":
+        rig.source.get_group_info.side_effect = RuntimeError("名称查询失败")
+    await generate(rig)
+    expected = (
+        f"来源群：API漫画源群（{SOURCE_GROUP}）"
+        if lookup == "api"
+        else f"来源群：{SOURCE_GROUP}"
+    )
+    rig.target.send_image.assert_awaited_once_with(
+        TARGET_GROUP, IMAGE_URL, caption=expected
+    )
+    rig.source.get_group_info.assert_awaited_once_with(SOURCE_GROUP)
+    rig.source.send_image.assert_not_awaited()
+
+
+@pytest.mark.parametrize("change", ["disable", "retarget"])
+@pytest.mark.asyncio
+async def test_comic_rechecks_destination_after_source_name_lookup(
+    official_comic_rig, change
+):
+    rig = official_comic_rig
+    rig.settings["forward_group_enabled"] = True
+    set_output(rig, "url")
+
+    async def lookup(_group_id):
+        if change == "disable":
+            rig.settings.update(forward_group_enabled=False, stop_source_group=True)
+        else:
+            rig.settings["forward_target"] = f"{TARGET_PLATFORM}:GroupMessage:new-group"
+        return SimpleNamespace(group_name="源群名称")
+
+    rig.source.get_group_info.side_effect = lookup
+    await generate(rig)
+    rig.source.get_group_info.assert_awaited_once_with(SOURCE_GROUP)
+    rig.target.send_image.assert_not_awaited()
+    rig.official.send_image.assert_not_awaited()
+    rig.official.send_private_image.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
     rig.source.upload_group_album.assert_not_awaited()

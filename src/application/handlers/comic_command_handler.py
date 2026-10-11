@@ -600,11 +600,47 @@ class ComicCommandHandler:
                     if comic_bytes and self.config_manager.get_show_report_caption()
                     else ""
                 )
+                if isinstance(target, QQOfficialPrivateTarget) or (
+                    target.group_id != group_id or target.platform_id != platform_id
+                ):
+                    group_name = (
+                        cur_trace.group_name
+                        if cur_trace
+                        and cur_trace.group_id == group_id
+                        and cur_trace.platform.casefold()
+                        == (platform_id or "").casefold()
+                        else ""
+                    )
+                    if not group_name.strip():
+                        try:
+                            source_adapter = self.bot_manager.get_adapter(platform_id)
+                            if source_adapter:
+                                info = await asyncio.wait_for(
+                                    source_adapter.get_group_info(group_id), timeout=5
+                                )
+                                if info:
+                                    group_name = info.group_name
+                        except Exception as exc:
+                            logger.warning(
+                                f"获取漫画来源群名称失败，保留群 ID：{type(exc).__name__}"
+                            )
+                    group_name = " ".join(group_name.split())
+                    source_label = (
+                        f"来源群：{group_name}（{group_id}）"
+                        if group_name and group_name != group_id
+                        else f"来源群：{group_id}"
+                    )
+                    caption = f"{source_label}\n{caption}".rstrip()
+                if self.terminating or (
+                    self._resolve_delivery_target(group_id, platform_id) != target
+                ):
+                    logger.info("漫画投递配置已改变，取消向旧目标发送。")
+                    return
                 if isinstance(target, QQOfficialPrivateTarget):
                     sent = await adapter.send_private_image(
                         target, image_url, caption=caption
                     )
-                elif comic_bytes:
+                elif caption or comic_bytes:
                     sent = await adapter.send_image(
                         target.group_id, image_url, caption=caption
                     )
