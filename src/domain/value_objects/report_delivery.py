@@ -50,6 +50,29 @@ class GroupReportTarget:
     group_id: str
     platform_id: str | None
 
+    @property
+    def session_id(self) -> str:
+        """获取实际投递的群会话标识。"""
+        return self.group_id
+
+
+@dataclass(frozen=True)
+class QQOfficialPrivateTarget:
+    """QQ 官方私聊目标，区分消息列表单聊与频道私聊。"""
+
+    user_id: str
+    platform_id: str
+    scene: Literal["c2c", "guild"] = "c2c"
+    source_guild_id: str = ""
+
+    @property
+    def session_id(self) -> str:
+        """获取实际投递的私聊用户标识。"""
+        return self.user_id
+
+
+ReportTarget = GroupReportTarget | QQOfficialPrivateTarget
+
 
 @dataclass(frozen=True)
 class ServerChanBotConfig:
