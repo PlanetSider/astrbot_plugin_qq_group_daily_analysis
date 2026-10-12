@@ -54,11 +54,11 @@ describe("Mock 路由分发器与数据源 (Mock Handlers & Dispatcher)", () => 
   });
 
   it("应当正确生成符合 MSW 标准规范的 Handler 定义列表", () => {
-    const defs = createMswHandlerDefinitions("/api/plugins/astrbot_plugin_qq_group_daily_analysis");
+    const defs = createMswHandlerDefinitions();
     expect(defs.length).toBeGreaterThan(15);
     const getTracesDef = defs.find((d) => d.method === "GET" && d.path === "traces");
     expect(getTracesDef).toBeDefined();
-    expect(getTracesDef?.urlPattern).toBe("/api/plugins/astrbot_plugin_qq_group_daily_analysis/traces");
+    expect(getTracesDef?.urlPattern).toBe("/api/plugins/astrbot_plugin_qq_group_daily_analysis_planetsider/traces");
 
     const resolved = getTracesDef?.resolver({ query: { status: "succeeded" } });
     expect(resolved?.status).toBe("ok");

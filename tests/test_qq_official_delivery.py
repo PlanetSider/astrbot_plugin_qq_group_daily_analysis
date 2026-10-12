@@ -8,21 +8,30 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.application.handlers.analysis_command_handler import AnalysisCommandHandler
+from src.application.services.task_lifecycle_service import TaskLifecycleService
 from src.domain.value_objects.report_delivery import (
     GroupReportTarget,
     QQOfficialPrivateTarget,
 )
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.config.config_migrator import ConfigMigrator
+from src.infrastructure.persistence.trace_sqlite_store import TraceSQLiteStore
 from src.infrastructure.platform.bot_manager import BotManager
 from src.infrastructure.reporting.dispatcher import ReportDispatcher
 from src.infrastructure.scheduler.auto_scheduler import AutoScheduler
+from src.shared import trace_context
 from src.shared.trace_context import TraceContext, _current_trace
 
 
 @pytest.fixture
-def delivery_rig(tmp_path):
-    """使用真实配置、实例选择及分发器，隔离渲染和外部请求。"""
+def delivery_rig(tmp_path, monkeypatch):
+    """使用真实配置、生命周期存储和分发器，隔离外部请求。"""
+    store = TraceSQLiteStore(tmp_path / "delivery-traces.db")
+    monkeypatch.setattr(trace_context, "_global_trace_store", store)
+    monkeypatch.setattr(
+        trace_context, "_global_task_lifecycle_service", TaskLifecycleService(store)
+    )
+    monkeypatch.setattr(trace_context, "_global_active_task_manager", None)
     settings = {
         "destination": "independent",
         "stop_source_group": False,
@@ -81,8 +90,10 @@ def delivery_rig(tmp_path):
     dispatcher.set_html_render(AsyncMock())
     dispatcher._try_upload_image = AsyncMock()
     trace = TraceContext(group_id="source-group", platform="source-platform")
+    trace.persist_snapshot()
     token = _current_trace.set(trace)
     yield SimpleNamespace(
+        trace_store=store,
         settings=settings,
         config=config,
         source=source,
@@ -373,7 +384,10 @@ def test_manual_delivery_never_yields_the_summary_body_to_source(
     rig.source.send_text_report.assert_not_awaited()
     assert result["analysis_success"] is True
     assert all("源群总结正文" not in message for message in messages)
+    persisted = rig.trace_store.get_trace(rig.trace.trace_id)
+    assert persisted is not None
     if mode == "disabled":
+        assert persisted["status"] == "succeeded"
         assert result["success"] is True
         assert result["report_sent"] is False
         assert result["report_delivery_skipped"] is True
@@ -385,6 +399,7 @@ def test_manual_delivery_never_yields_the_summary_body_to_source(
         assert result["report_sent"] is success
         assert result["success"] is success
         if not success:
+            assert persisted["status"] == "failed"
             assert result["reason"] == "report_delivery_failed"
             assert "未发送到原群" in messages[0]
 

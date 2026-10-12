@@ -69,7 +69,7 @@ export async function fetchContext(): Promise<AstrBotContext> {
   if (import.meta.env.DEV) {
     return await devFetchContext();
   }
-  return { isDark: false, pluginName: "astrbot_plugin_qq_group_daily_analysis" };
+  return { isDark: false, pluginName: "astrbot_plugin_qq_group_daily_analysis_planetsider" };
 }
 
 export async function apiGet<T = unknown>(

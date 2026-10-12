@@ -150,7 +150,7 @@ def load_main_method(name: str):
             return await target_func(plugin, *args, **kwargs)
 
         return async_wrapper
-    elif inspect.isasyncgenfunction(target_func):
+    if inspect.isasyncgenfunction(target_func):
 
         @functools.wraps(target_func)
         async def async_gen_wrapper(plugin, *args, **kwargs):
@@ -159,14 +159,13 @@ def load_main_method(name: str):
                 yield item
 
         return async_gen_wrapper
-    else:
 
-        @functools.wraps(target_func)
-        def sync_wrapper(plugin, *args, **kwargs):
-            _ensure_plugin_handlers(plugin)
-            return target_func(plugin, *args, **kwargs)
+    @functools.wraps(target_func)
+    def sync_wrapper(plugin, *args, **kwargs):
+        _ensure_plugin_handlers(plugin)
+        return target_func(plugin, *args, **kwargs)
 
-        return sync_wrapper
+    return sync_wrapper
 
 
 def load_comic_service_method(name: str):
@@ -211,11 +210,14 @@ def load_comic_service_method(name: str):
     )
     from collections.abc import Sequence
     from contextlib import nullcontext
+
     from src.domain.value_objects import ComicStoryboard, SummaryTopic
+    from src.shared.constants import PLUGIN_NAME
     from src.shared.trace_context import TraceContext
 
     namespace = {
         "Path": Path,
+        "PLUGIN_NAME": PLUGIN_NAME,
         "mimetypes": mimetypes,
         "logger": Mock(),
         "Any": Any,
@@ -1552,7 +1554,7 @@ def test_comic_storyboard_assembler_combines_scene_and_panels():
         ensure_ascii=False,
     )
 
-    success, result, error = analyzer.parse_structured_response(llm_output)
+    success, result, _error = analyzer.parse_structured_response(llm_output)
     assert success is True
     assert result is not None
     assert len(result) == 1

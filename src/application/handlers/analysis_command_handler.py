@@ -25,6 +25,7 @@ from ...domain.repositories.platform_adapter_repository import (
     GroupFileSupportProtocol,
     PlatformAdapterProtocol,
 )
+from ...domain.value_objects.task_event import TaskEvent
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
@@ -223,7 +224,7 @@ class AnalysisCommandHandler:
                         else f"Analysis skipped/failed: {reason}"
                     )
                     trace.finish(
-                        status="failed",
+                        event=TaskEvent.FAIL,
                         error_message=err_msg,
                     )
                 if reason == "no_messages":
@@ -254,21 +255,26 @@ class AnalysisCommandHandler:
                 yield res
 
             if trace and trace.status == "running":
-                trace.finish(status="succeeded")
+                trace.finish(event=TaskEvent.SUCCEED)
 
         except DuplicateGroupTaskError:
             if trace and trace.status == "running":
                 trace.finish(
-                    status="aborted", error_message="Task already running in group"
+                    event=TaskEvent.ABORT, error_message="Task already running in group"
                 )
             yield event.plain_result("📊 该群的分析任务正在执行中，请稍后再试哦~")
         except asyncio.CancelledError:
             if trace and trace.status == "running":
-                trace.finish(status="aborted", error_message="Task cancelled by system")
+                try:
+                    trace.finish(
+                        event=TaskEvent.ABORT, error_message="Task cancelled by system"
+                    )
+                except RuntimeError as transition_error:
+                    logger.info(f"取消收尾时任务已由并发事件收敛: {transition_error}")
             logger.info("群分析任务被取消 (插件重载或卸载)")
         except Exception as e:
             if trace and trace.status == "running":
-                trace.finish(status="failed", error_message=str(e))
+                trace.finish(event=TaskEvent.FAIL, error_message=str(e))
             logger.error(f"群分析失败: {e}", exc_info=True)
             yield event.plain_result(
                 f"❌ 分析失败: {e!s}。请检查网络连接和LLM配置，或联系管理员"
@@ -312,7 +318,7 @@ class AnalysisCommandHandler:
             result["reason"] = "report_delivery_failed"
             trace = TraceContext.current()
             if trace and trace.status == "running":
-                trace.finish(status="failed", error_message=str(exc))
+                trace.finish(event=TaskEvent.FAIL, error_message=str(exc))
             yield event.plain_result("❌ 总结投递配置无效，请检查插件的总结投递设置。")
             return
 
@@ -327,7 +333,7 @@ class AnalysisCommandHandler:
                 trace.metadata["report_delivery_skipped"] = True
                 trace.metadata["report_delivery_results"] = {}
                 if trace.status == "running":
-                    trace.finish(status="succeeded")
+                    trace.finish(event=TaskEvent.SUCCEED)
             yield event.plain_result(
                 "✅ 分析已完成；已开启停止向原群发送且未启用转发通道，本次总结不投递。"
             )
@@ -366,7 +372,7 @@ class AnalysisCommandHandler:
                 result["reason"] = "report_delivery_failed"
                 trace = TraceContext.current()
                 if trace and trace.status == "running":
-                    trace.finish(status="failed", error_message="总结投递失败")
+                    trace.finish(event=TaskEvent.FAIL, error_message="总结投递失败")
                 yield event.plain_result(
                     "❌ 总结投递失败，请检查指定群、QQ 官方机器人或 Server酱配置；总结未发送到原群。"
                 )

@@ -1,7 +1,7 @@
 import { ApiResponse, AstrBotContext, SSEEventWrapper } from "./bridge";
 import { mockHandlers, mockSSEService } from "../../mocks";
 
-const PLUGIN_BASE_PATH = "/api/plugins/astrbot_plugin_qq_group_daily_analysis";
+const PLUGIN_BASE_PATH = "/api/plugins/astrbot_plugin_qq_group_daily_analysis_planetsider";
 
 export type DevBridgeMode = "mock" | "proxy";
 
@@ -81,7 +81,7 @@ function matchMockHandler(method: string, path: string, params?: Record<string, 
 export async function devFetchContext(): Promise<AstrBotContext> {
   return {
     isDark: false,
-    pluginName: "astrbot_plugin_qq_group_daily_analysis",
+    pluginName: "astrbot_plugin_qq_group_daily_analysis_planetsider",
     version: "v5.6.4",
   };
 }

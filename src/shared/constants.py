@@ -9,6 +9,8 @@ import time
 import uuid
 from enum import Enum
 
+from ..domain.value_objects.task_status import TaskStatus as TaskStatus
+
 # 当前 Python 进程与实例生命周期唯一凭据 (用于区分进程崩溃与热重载)
 PROCESS_PID: int = os.getpid()
 PROCESS_BOOT_ID: str = f"{PROCESS_PID}:{uuid.uuid4().hex[:8]}:{int(time.time())}"
@@ -52,22 +54,6 @@ class AnalysisStage(str, Enum):
     COMIC_DRAWING = "COMIC_DRAWING"
 
 
-class TaskStatus(str, Enum):
-    """
-    分析任务执行状态枚举
-
-    用于在异步处理流水线中标记分析任务的生命阶段。
-    """
-
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    ABORTED = "aborted"
-    SKIPPED = "skipped"
-
-
 class ContentType(str, Enum):
     """
     统一消息内容类型枚举
@@ -101,7 +87,7 @@ class ReportFormat(str, Enum):
 
 
 # 插件元数据与仓库配置
-PLUGIN_NAME = "astrbot_plugin_qq_group_daily_analysis"
+PLUGIN_NAME = "astrbot_plugin_qq_group_daily_analysis_planetsider"
 GITHUB_REPO_OWNER = "SXP-Simon"
 GITHUB_REPO_NAME = "astrbot_plugin_qq_group_daily_analysis"
 GITHUB_REPO_BRANCH = "main"

@@ -10,7 +10,7 @@ from ...infrastructure.drawing.drawing_client import (
     DrawingClient,
     ImageDownloadFailedError,
 )
-from ...shared.constants import AnalysisStage
+from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
 
@@ -606,11 +606,7 @@ class ComicApplicationService:
                 )
 
             candidate_paths.append(
-                Path.cwd()
-                / "data"
-                / "plugin_data"
-                / "astrbot_plugin_qq_group_daily_analysis"
-                / clean_rel
+                Path.cwd() / "data" / "plugin_data" / PLUGIN_NAME / clean_rel
             )
             candidate_paths.append(Path(clean_rel))
 
@@ -624,12 +620,7 @@ class ComicApplicationService:
             search_roots: list[Path] = []
             if hasattr(self, "plugin_data_dir") and self.plugin_data_dir:
                 search_roots.append(Path(self.plugin_data_dir))
-            search_roots.append(
-                Path.cwd()
-                / "data"
-                / "plugin_data"
-                / "astrbot_plugin_qq_group_daily_analysis"
-            )
+            search_roots.append(Path.cwd() / "data" / "plugin_data" / PLUGIN_NAME)
 
             for root in search_roots:
                 files_dir = root / "files"

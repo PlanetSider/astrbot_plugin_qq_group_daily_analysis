@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -61,12 +60,12 @@ class FakePlatformMetadata:
 
 
 class FakePlatform:
-    def __init__(self, platform_id: str, platform_type: str, client: Any) -> None:
+    def __init__(self, platform_id: str, platform_type: str, client: object) -> None:
         self.metadata = FakePlatformMetadata(platform_id, platform_type)
         self.client = client
         self.config = {"plugin_set": ["*"]}
 
-    def get_client(self) -> Any:
+    def get_client(self) -> object:
         return self.client
 
 
@@ -205,7 +204,7 @@ async def test_auto_scheduler_multi_platform_scanning_isolation():
 
     # Verify that only OneBot groups are present
     assert len(all_groups) == 4
-    for pid, gid in all_groups:
+    for pid, _gid in all_groups:
         assert pid == "onebot_main"
         assert pid != "lark_main"
 
@@ -341,6 +340,7 @@ async def test_analysis_service_rejects_unmatched_platform():
 def test_platform_adapter_time_window_calculation_boundaries():
     """Verify PlatformAdapter base calculation methods enforce strict [now - days, now] bounds."""
     from datetime import datetime, timezone
+
     from src.infrastructure.platform.base import PlatformAdapter
 
     base_now = datetime(2026, 9, 23, 12, 0, 0, tzinfo=timezone.utc)
@@ -521,10 +521,10 @@ async def test_group_level_profile_override_when_platform_disabled():
     # aiocqhttp_bot:: -> 未启用插件
     def acm_router(umo: str | None = None):
         if umo == "aiocqhttp_bot:GroupMessage:1001":
-            return {"plugin_set": ["astrbot_plugin_qq_group_daily_analysis"]}
-        elif umo == "aiocqhttp_bot:GroupMessage:1002":
-            return {"plugin_set": []}
-        elif umo == "aiocqhttp_bot::":
+            return {
+                "plugin_set": ["astrbot_plugin_qq_group_daily_analysis_planetsider"]
+            }
+        if umo == "aiocqhttp_bot:GroupMessage:1002" or umo == "aiocqhttp_bot::":
             return {"plugin_set": []}
         return {"plugin_set": []}
 
@@ -564,5 +564,3 @@ async def test_group_level_profile_override_when_platform_disabled():
     targets = await scheduler._get_scheduled_targets()
     assert len(targets) == 1
     assert targets[0] == ("1001", "aiocqhttp_bot", "traditional")
-
-

@@ -28,9 +28,13 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 <img src="https://count.getloli.com/@astrbot-qq-group-daily-analysis?name=astrbot-qq-group-daily-analysis&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </div>
 
-本自用版作者为 **PlanetSider**，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。
+本自用版作者为 **PlanetSider**，独立插件标识为 `astrbot_plugin_qq_group_daily_analysis_planetsider`，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。仓库名称保持不变，插件的注册名称、配置、数据目录、控制台路由和定时任务均使用独立标识。本次合并了上游 v5.7.9（`20dda5a`）的任务状态机、任务取消与恢复、持久化兼容及控制台状态展示改动，保留自用版投递功能与 v5.7.8.4 版本号。
 
 在 AstrBot 的插件源管理中添加 [自用插件源地址](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)，刷新后选择作者为 `PlanetSider` 的“群分析总结插件自用版”。该源的安装包指向 `feature/serverchan-summary-routing` 分支。
+
+首次从旧同名自用版迁移时，请先停用旧插件并备份配置和数据，再安装独立版。新标识会使用新的配置文件和 `data/plugin_data/astrbot_plugin_qq_group_daily_analysis_planetsider/`，不会自动读取或改写旧插件的数据。可在停用两版插件后，将旧配置内容导入新插件，按需把旧数据目录 `data/plugin_data/astrbot_plugin_qq_group_daily_analysis/` 中的数据复制到新目录，并重新在会话配置中启用独立版。复制后检查参考图、自定义模板及 HTML 报告输出路径等绝对路径配置，确保指向新目录。两版使用相同的群命令，建议在同一会话只启用其中一版，以免重复分析和重复发送。
+
+安装目录隔离已按 AstrBot 4.28.2 的 `metadata.name` 安装规则验证。旧版 AstrBot 若仍按仓库名称生成目录，应先升级 AstrBot，或通过本地安装将独立版放到 `data/plugins/astrbot_plugin_qq_group_daily_analysis_planetsider/`，避免继续使用与上游相同的目录。
 
 - [常见问题 (FAQ)](#常见问题-FAQ)
 - [效果](#效果)
@@ -171,6 +175,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 | 配置项                  | 说明                                                        | 备注                                                                             |
 | ----------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 自动分析时间列表        | 控制定时报告的每日触发时间。                                | 清空并保存后会移除已注册的定时报告；增量分析仍按其独立配置和新增消息量触发       |
 | 定时分析名单模式 + 列表 | 控制哪些群参与定时任务（报告时间点触发）。                  | 可选 `inherit` 继承基础群权限；`whitelist + 空列表` 表示不注册定时任务           |
 | 增量分析名单模式 + 列表 | 控制哪些群走增量模式，其他群走传统全量。                    | 可选 `inherit` 继承定时分析最终名单；`whitelist + 空列表` 表示不启用增量周期任务 |
 | 每日群漫画              | 分析结果完成后并行生成漫画，也可用 `/群漫画` 单独生成。     | `enable_daily_comic` 是总开关，`enable_auto_daily_comic` 控制分析后自动联动      |
