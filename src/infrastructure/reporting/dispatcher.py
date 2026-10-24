@@ -23,6 +23,7 @@ from ...shared.constants import AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
 from ..messaging.serverchan_bot_sender import ServerChanBotSender
+from .html_renderer import bind_group_html_renderer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -377,6 +378,9 @@ class ReportDispatcher:
             )
 
         # 2. 生成图片
+        html_render = bind_group_html_renderer(
+            self._html_render_func, group_id, platform_id
+        )
         image_url = None
         try:
             # 定义头像获取回调，请求小尺寸头像以优化性能
@@ -413,7 +417,7 @@ class ReportDispatcher:
                     ) = await self.report_generator.generate_image_report(
                         analysis_result,
                         group_id,
-                        self._html_render_func,
+                        html_render,
                         avatar_url_getter=avatar_url_getter,
                         avatar_cache_namespace=platform_id,
                         allow_alphanumeric_user_ids=self._is_qq_official(platform_id),
@@ -426,7 +430,7 @@ class ReportDispatcher:
                 ) = await self.report_generator.generate_image_report(
                     analysis_result,
                     group_id,
-                    self._html_render_func,
+                    html_render,
                     avatar_url_getter=avatar_url_getter,
                     avatar_cache_namespace=platform_id,
                     allow_alphanumeric_user_ids=self._is_qq_official(platform_id),
@@ -876,7 +880,7 @@ class ReportDispatcher:
                 fallback_report,
             ) = await self.report_generator.generate_markdown_report(
                 analysis_result,
-                self._html_render_func,
+                bind_group_html_renderer(self._html_render_func, group_id, platform_id),
                 mention_style="qq"
                 if platform_id == delivery_target.platform_id
                 else "name",

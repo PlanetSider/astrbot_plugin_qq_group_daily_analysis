@@ -2,7 +2,7 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.7.8.4-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.8.3.1-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
@@ -28,7 +28,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 <img src="https://count.getloli.com/@astrbot-qq-group-daily-analysis?name=astrbot-qq-group-daily-analysis&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </div>
 
-本自用版作者为 **PlanetSider**，独立插件标识为 `astrbot_plugin_qq_group_daily_analysis_planetsider`，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。仓库名称保持不变，插件的注册名称、配置、数据目录、控制台路由和定时任务均使用独立标识。本次合并了上游 v5.7.9（`20dda5a`）的任务状态机、任务取消与恢复、持久化兼容及控制台状态展示改动，保留自用版投递功能与 v5.7.8.4 版本号。
+本自用版作者为 **PlanetSider**，独立插件标识为 `astrbot_plugin_qq_group_daily_analysis_planetsider`，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。仓库名称保持不变，插件的注册名称、配置、数据目录、控制台路由和定时任务均使用独立标识。本次合并了上游 v5.8.3 及后续素材压缩修复（`4e53ad9`），包含模板 CDN 配置与检测、群聊 T2I 配置适配、图片生成与诊断修复，保留自用版投递功能，版本号为 v5.8.3.1。自用版版本号采用 `vX.X.X.N`：前三位与上游版本一致，每次合并新的上游版本时末位从 `1` 开始；同一上游版本内再次修改时仅递增末位。
 
 在 AstrBot 的插件源管理中添加 [自用插件源地址](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)，刷新后选择作者为 `PlanetSider` 的“群分析总结插件自用版”。该源的安装包指向 `feature/serverchan-summary-routing` 分支。
 
@@ -643,6 +643,7 @@ AstrBot 更新插件时会先删除旧插件目录，再解压或移动新目录
 
 > [!IMPORTANT]
 > **排查手段 1：外链大字体包/图片 CDN 下载阻塞（国内服务器高发）**
+> - **模板图片加载慢时，可以换个 CDN**：在插件 WebUI 的「图片渲染策略 → 模板资源 CDN 基础地址」选择预设，也可以手填支持 `/gh/` 和 `/npm/` 的网站地址。国内网络可先试 JSDMirror（`https://cdn.jsdmirror.com/`、`https://cdn.jsdmirror.cn/`），另提供 NOISE（`https://jsd.cdn.noisework.cn/`）和哔哩 CDN（`https://cdn.bili33.top/`）备选，请按实际网络检测选用。海外网络可先试 jsDelivr（`https://cdn.jsdelivr.net/`），或 Fastly、Gcore 入口（`https://fastly.jsdelivr.net/`、`https://gcore.jsdelivr.net/`）。每次使用一个地址，使用前请测试实际网络的速度和可达性。点「检测可用性」会检查机器人所在服务器能否访问模板资源及 npm 链接，只请求响应头，不下载文件；使用远程图片渲染服务时，请再生成一份报告确认。内置 SBTI、ACGTI 图片也使用所选 CDN，用户自定义图片和 Google 字体仍按各自设置加载。
 > - **原因**：Playwright `page.goto` 默认使用 `wait_until="load"` 策略，会阻塞等待 HTML 报告中引入的所有外链 CSS、字体包及角色立绘图片全部下载完毕。部分精美模板包含 30MB+ 的中文字体文件或引用的海外 CDN（如 jsDelivr/Fastly），若国内服务器网络波动，50 秒内未全部下载完毕便会触发超时抛出 500。
 > - **解决方案**：
 >   1. **优先走 IPv4 路由（推荐）**：国内云服务器（如腾讯云/阿里云）默认启用了 IPv6，但访问海外 CDN 经常遭遇 IPv6 握手黑洞（超时等待 15~30s）。在宿主机编辑 `/etc/gai.conf`，追加 `precedence ::ffff:0:0/96 100` 强制系统优先走 IPv4。

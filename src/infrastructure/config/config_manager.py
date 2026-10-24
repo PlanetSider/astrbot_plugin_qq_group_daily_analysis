@@ -20,7 +20,15 @@ from ...domain.value_objects.report_delivery import (
     ReportTarget,
     ServerChanBotConfig,
 )
-from ...shared.constants import DEFAULT_ATRI_ASSETS_CDN_URL, PLUGIN_NAME
+from ...shared.constants import (
+    DEFAULT_ATRI_ASSETS_CDN_URL,
+    DEFAULT_CDN_HOST,
+    GITHUB_REPO_BRANCH,
+    GITHUB_REPO_NAME,
+    GITHUB_REPO_OWNER,
+    PLUGIN_NAME,
+)
+from ...utils.cdn_utils import normalize_cdn_base_url
 from ...utils.logger import logger
 from .config_migrator import ConfigMigrator
 
@@ -149,8 +157,10 @@ class ConfigManager:
         )
 
     def _get_group(self, group: str) -> dict:
-        """获取指定分组的配置字典，不存在时返回空字典"""
-        return self.config.get(group, {})
+        """获取配置分组，不存在或不是字典时按空分组读取"""
+        value = self.config.get(group, {})
+        # 异常分组按缺省值读取，保留原始配置以便管理员修正。
+        return value if isinstance(value, dict) else {}
 
     def _ensure_group(self, group: str) -> dict:
         """确保指定分组存在并返回其字典引用"""
@@ -612,12 +622,38 @@ class ConfigManager:
             return group.get("t2i_mainland_gstatic", "https://gstatic.loli.net")
         return group.get("t2i_overseas_gstatic", "https://fonts.gstatic.com")
 
+    def get_t2i_cdn_base_url(self) -> str:
+        """获取不带末尾斜杠的模板 CDN 根地址。
+
+        Returns:
+            HTTP(S) 根地址；空值或不符合根地址格式时使用默认 CDN。
+        """
+        value = self._get_group("t2i_rendering").get("t2i_cdn_base_url", "")
+        try:
+            return normalize_cdn_base_url(value if isinstance(value, str) else "")
+        except ValueError:
+            pass
+        return DEFAULT_CDN_HOST
+
+    def get_template_assets_base_url(self) -> str:
+        """获取当前 CDN 下的仓库素材目录。
+
+        Returns:
+            可拼接主题目录或预览图文件名的素材 URL。
+        """
+        return (
+            f"{self.get_t2i_cdn_base_url()}/gh/"
+            f"{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}@{GITHUB_REPO_BRANCH}/assets"
+        )
+
     def get_t2i_atri_font_mirror(self) -> str:
         """获取 ATRI 主题字体与静态资源镜像地址"""
-        return self._get_group("t2i_rendering").get(
-            "t2i_atri_font_mirror",
-            DEFAULT_ATRI_ASSETS_CDN_URL,
-        )
+        mirror = self._get_group("t2i_rendering").get("t2i_atri_font_mirror", "")
+        if isinstance(mirror, str):
+            mirror = mirror.strip().rstrip("/")
+            if mirror and mirror != DEFAULT_ATRI_ASSETS_CDN_URL:
+                return mirror
+        return f"{self.get_template_assets_base_url()}/ATRI"
 
     def get_llm_provider_id(self) -> str:
         """获取主 LLM Provider ID"""
@@ -1552,13 +1588,18 @@ class ConfigManager:
         prompts_config = self._get_group("prompts").get("comic_analysis_prompts", {})
         return prompts_config.get(style, "")
 
-    def save_config(self):
-        """保存配置到AstrBot配置系统"""
+    def save_config(self) -> None:
+        """保存配置到 AstrBot 配置系统，失败时交由调用方处理。
+
+        Raises:
+            Exception: AstrBot 保存配置时发生的原始异常。
+        """
         try:
             self.config.save_config()
             logger.info("配置已保存")
         except Exception as e:
             logger.error(f"保存配置失败: {e}")
+            raise
 
     def reload_config(self):
         """重新加载配置"""

@@ -6,7 +6,7 @@
   "PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider": {
     "author": "PlanetSider",
     "name": "astrbot_plugin_qq_group_daily_analysis_planetsider",
-    "version": "v5.7.8.4",
+    "version": "v5.8.3.1",
     "repo": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis",
     "download_url": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/archive/refs/heads/feature/serverchan-summary-routing.zip",
     "display_name": "群分析总结插件自用版",

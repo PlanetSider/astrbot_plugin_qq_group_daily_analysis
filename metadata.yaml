@@ -1,7 +1,7 @@
 name: astrbot_plugin_qq_group_daily_analysis_planetsider # 自用版唯一插件标识，与上游独立。
 display_name: 群分析总结插件自用版 # 插件的显示名称
 desc: "群日常分析总结插件自用版 - 支持 OneBot、QQ 官方群聊及私聊、Telegram、Discord；支持指定群、QQ 官方机器人和 Server酱独立投递及来源群标识"
-version: v5.7.8.4 # 自用版版本号；已合并上游 v5.7.9 的修复。
+version: v5.8.3.1 # 自用版版本号；已合并上游 v5.8.3 及后续素材压缩修复。
 author: PlanetSider # 自用版作者；与上游插件源身份区分
 astrbot_version: ">=4.24.1" # 插件 WebUI 自定义页面能力最低版本
 support_platforms:
