@@ -1,5 +1,9 @@
 # 更新日志 (CHANGELOG)
 
+## [v5.8.3.4] - 模板行尾符规范化
+
+*   ATRI 模板的活动图表与聊天质量组件统一为 LF 行尾符，与仓库其余文件一致，消除工作区持续的伪差异提示；模板内容无任何变化。同步自用版版本号。
+
 ## [v5.8.3.3] - 飞书通道支持复用 AstrBot 已接入的飞书(Lark)机器人
 
 *   **新增复用模式**：在“总结投递”中新增“复用飞书目标会话”（`feishu_target`），粘贴通过已接入飞书(Lark)机器人获取的完整会话 ID（如 `lark-main:FriendMessage:ou_xxx` 或 `lark-main:GroupMessage:oc_xxx`）即可复用宿主实例发送，无需填写 App ID/Secret 等任何凭据。`feishu_target` 与独立凭据同时填写时优先复用，留空则沿用独立凭据直连模式。
