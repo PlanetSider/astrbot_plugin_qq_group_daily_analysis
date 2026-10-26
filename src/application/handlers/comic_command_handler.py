@@ -12,13 +12,16 @@ from typing import TYPE_CHECKING, cast
 
 from ...domain.value_objects.analysis_results import SummaryTopic
 from ...domain.value_objects.report_delivery import (
+    FEISHU_COMIC_DELIVERY_MODES,
     FORWARD_GROUP_DELIVERY_MODES,
     QQ_OFFICIAL_DELIVERY_MODES,
+    FeishuPrivateTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
     ReportTarget,
 )
 from ...domain.value_objects.task_event import TaskEvent
+from ...infrastructure.messaging.feishu_bot_sender import FeishuBotSender
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
@@ -48,6 +51,7 @@ class ComicCommandHandler:
     comic_service: ComicApplicationService
     analysis_service: AnalysisApplicationService
     active_task_manager: ActiveTaskManager | None
+    feishu_sender: FeishuBotSender
     plugin_data_dir: Path
     plugin_instance: PluginHostProtocol | None
     terminating: bool
@@ -70,6 +74,7 @@ class ComicCommandHandler:
         self.comic_service = comic_service
         self.analysis_service = analysis_service
         self.active_task_manager = active_task_manager
+        self.feishu_sender = FeishuBotSender()
         self.plugin_data_dir = (
             plugin_data_dir or Path.cwd() / "data" / "plugin_data" / PLUGIN_NAME
         )
@@ -352,7 +357,7 @@ class ComicCommandHandler:
             platform_id: 源群平台实例 ID。
 
         Returns:
-            群聊或私聊投递目标；停止投递或仅 Server酱文本通道时返回 None。
+            群聊、私聊或飞书私聊投递目标；停止投递或仅 Server酱文本通道时返回 None。
 
         Raises:
             ValueError: 投递配置无效或转发目标实际为原群。
@@ -366,6 +371,12 @@ class ComicCommandHandler:
                     self.config_manager.get_qq_official_report_target(),
                     group_id,
                     platform_id,
+                )
+            if mode in FEISHU_COMIC_DELIVERY_MODES:
+                bot_config = self.config_manager.get_feishu_bot_config()
+                return FeishuPrivateTarget(
+                    user_id=bot_config.user_id,
+                    user_id_type=bot_config.user_id_type,
                 )
             return None
 
@@ -433,13 +444,20 @@ class ComicCommandHandler:
             return "delivery_disabled"
 
         if trace:
-            trace.metadata["comic_target_platform"] = delivery_target.platform_id or ""
-            if isinstance(delivery_target, QQOfficialPrivateTarget):
+            if isinstance(delivery_target, FeishuPrivateTarget):
+                trace.metadata["comic_target_platform"] = "feishu"
                 trace.metadata["comic_target_user_id"] = delivery_target.user_id
-                trace.metadata["comic_target_scene"] = delivery_target.scene
+                trace.metadata["comic_target_scene"] = "feishu_private"
             else:
-                trace.metadata["comic_target_group_id"] = delivery_target.group_id
-                trace.metadata["comic_target_scene"] = "group"
+                trace.metadata["comic_target_platform"] = (
+                    delivery_target.platform_id or ""
+                )
+                if isinstance(delivery_target, QQOfficialPrivateTarget):
+                    trace.metadata["comic_target_user_id"] = delivery_target.user_id
+                    trace.metadata["comic_target_scene"] = delivery_target.scene
+                else:
+                    trace.metadata["comic_target_group_id"] = delivery_target.group_id
+                    trace.metadata["comic_target_scene"] = "group"
 
         umo = f"{platform_id}:GroupMessage:{group_id}" if platform_id else group_id
         inherit_allowed = True if require_auto_enabled else None
@@ -586,33 +604,35 @@ class ComicCommandHandler:
                     logger.warning(f"群 {group_id} 漫画生成未产生有效输出。")
                     return
 
-                adapter = self.bot_manager.get_adapter(target.platform_id)
-                if adapter is None:
-                    logger.warning(
-                        f"漫画目标平台不可用，取消发送：{target.platform_id or 'default'}"
-                    )
-                    return
                 if cur_trace:
-                    cur_trace.metadata["comic_target_platform"] = (
-                        target.platform_id or ""
-                    )
-                    if isinstance(target, QQOfficialPrivateTarget):
+                    if isinstance(target, FeishuPrivateTarget):
+                        cur_trace.metadata["comic_target_platform"] = "feishu"
                         cur_trace.metadata.pop("comic_target_group_id", None)
                         cur_trace.metadata["comic_target_user_id"] = target.user_id
-                        cur_trace.metadata["comic_target_scene"] = target.scene
+                        cur_trace.metadata["comic_target_scene"] = "feishu_private"
                     else:
-                        cur_trace.metadata.pop("comic_target_user_id", None)
-                        cur_trace.metadata["comic_target_group_id"] = target.group_id
-                        cur_trace.metadata["comic_target_scene"] = "group"
+                        cur_trace.metadata["comic_target_platform"] = (
+                            target.platform_id or ""
+                        )
+                        if isinstance(target, QQOfficialPrivateTarget):
+                            cur_trace.metadata.pop("comic_target_group_id", None)
+                            cur_trace.metadata["comic_target_user_id"] = target.user_id
+                            cur_trace.metadata["comic_target_scene"] = target.scene
+                        else:
+                            cur_trace.metadata.pop("comic_target_user_id", None)
+                            cur_trace.metadata["comic_target_group_id"] = (
+                                target.group_id
+                            )
+                            cur_trace.metadata["comic_target_scene"] = "group"
 
                 caption = (
                     TraceContext.make_report_caption()
                     if comic_bytes and self.config_manager.get_show_report_caption()
                     else ""
                 )
-                if isinstance(target, QQOfficialPrivateTarget) or (
-                    target.group_id != group_id or target.platform_id != platform_id
-                ):
+                if isinstance(
+                    target, (QQOfficialPrivateTarget, FeishuPrivateTarget)
+                ) or (target.group_id != group_id or target.platform_id != platform_id):
                     group_name = (
                         cur_trace.group_name
                         if cur_trace
@@ -646,22 +666,37 @@ class ComicCommandHandler:
                 ):
                     logger.info("漫画投递配置已改变，取消向旧目标发送。")
                     return
-                if isinstance(target, QQOfficialPrivateTarget):
-                    sent = await adapter.send_private_image(
-                        target, image_url, caption=caption
-                    )
-                elif caption or comic_bytes:
-                    sent = await adapter.send_image(
-                        target.group_id, image_url, caption=caption
+                if isinstance(target, FeishuPrivateTarget):
+                    bot_config = self.config_manager.get_feishu_bot_config()
+                    sent = await self.feishu_sender.send_comic(
+                        bot_config, image_url, caption
                     )
                 else:
-                    sent = await adapter.send_image(target.group_id, image_url)
+                    adapter = self.bot_manager.get_adapter(target.platform_id)
+                    if adapter is None:
+                        logger.warning(
+                            f"漫画目标平台不可用，取消发送：{target.platform_id or 'default'}"
+                        )
+                        return
+                    if isinstance(target, QQOfficialPrivateTarget):
+                        sent = await adapter.send_private_image(
+                            target, image_url, caption=caption
+                        )
+                    elif caption or comic_bytes:
+                        sent = await adapter.send_image(
+                            target.group_id, image_url, caption=caption
+                        )
+                    else:
+                        sent = await adapter.send_image(target.group_id, image_url)
                 if not sent:
                     logger.warning(
                         f"漫画投递失败（目标会话 {target.session_id}），不会回发原群。"
                     )
                     return
-                if isinstance(target, QQOfficialPrivateTarget) or not comic_bytes:
+                if (
+                    isinstance(target, (QQOfficialPrivateTarget, FeishuPrivateTarget))
+                    or not comic_bytes
+                ):
                     return
 
                 if self._resolve_delivery_target(group_id, platform_id) != target:

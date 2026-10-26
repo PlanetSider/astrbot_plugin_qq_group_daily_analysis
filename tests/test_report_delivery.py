@@ -94,6 +94,35 @@ def test_serverchan_delivery_does_not_require_platform_adapter():
     asyncio.run(scenario())
 
 
+def test_feishu_delivery_does_not_require_platform_adapter():
+    async def scenario():
+        config_manager = SimpleNamespace(
+            get_report_delivery_mode=Mock(return_value="feishu"),
+            get_feishu_bot_config=Mock(
+                return_value=SimpleNamespace(
+                    app_id="cli_xxx",
+                    app_secret="secret",
+                    user_id="ou_abc",
+                    user_id_type="open_id",
+                )
+            ),
+        )
+        report_generator = SimpleNamespace(
+            generate_text_report=Mock(return_value="源群总结正文")
+        )
+        message_sender = SimpleNamespace(bot_manager=SimpleNamespace())
+        dispatcher = ReportDispatcher(config_manager, report_generator, message_sender)
+        dispatcher.feishu_sender.send_summary = AsyncMock(return_value=True)
+
+        assert await dispatcher.dispatch("source-group", {}, None) is True
+        dispatcher.feishu_sender.send_summary.assert_awaited_once()
+        assert dispatcher.feishu_sender.send_summary.await_args.args[1].endswith(
+            "源群总结正文"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_traditional_analysis_is_failed_when_report_delivery_fails():
     async def scenario():
         mock_comic_handler = SimpleNamespace(try_trigger_comic_generation=Mock())

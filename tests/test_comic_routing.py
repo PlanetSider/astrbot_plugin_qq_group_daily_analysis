@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.application.handlers.comic_command_handler import ComicCommandHandler
-from src.domain.value_objects.report_delivery import QQOfficialPrivateTarget
+from src.domain.value_objects.report_delivery import (
+    FeishuPrivateTarget,
+    QQOfficialPrivateTarget,
+)
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.platform.bot_manager import BotManager
 from src.shared.trace_context import TraceContext, _current_trace
@@ -1007,3 +1010,146 @@ async def test_comic_rechecks_destination_after_source_name_lookup(
     rig.source.send_image.assert_not_awaited()
     rig.target.upload_group_album.assert_not_awaited()
     rig.source.upload_group_album.assert_not_awaited()
+
+
+# ================================================================
+# 飞书机器人漫画目标：优先级、来源标识与失败处理
+# ================================================================
+
+
+@pytest.fixture
+def feishu_comic_rig(comic_rig):
+    """为飞书漫画路由提供有效应用凭据与发送器替身。"""
+    rig = comic_rig
+    rig.settings.update(
+        destination="independent",
+        forward_group_enabled=False,
+        serverchan_enabled=False,
+        feishu_enabled=True,
+        feishu_app_id="cli_xxx",
+        feishu_app_secret="secret",
+        feishu_user_id="ou_abc",
+    )
+    rig.handler.feishu_sender = SimpleNamespace(send_comic=AsyncMock(return_value=True))
+    bot_manager = rig.handler.bot_manager
+    bot_manager.validate_qq_official_report_target = lambda target, _g, _p: target
+    return rig
+
+
+@pytest.mark.parametrize("output", ["bytes", "url"])
+@pytest.mark.parametrize("serverchan", [False, True])
+@pytest.mark.parametrize("require_auto", [False, True])
+@pytest.mark.asyncio
+async def test_feishu_only_mode_sends_comic_to_bot_private_chat(
+    feishu_comic_rig, output, serverchan, require_auto
+):
+    rig = feishu_comic_rig
+    rig.settings["serverchan_enabled"] = serverchan
+    set_output(rig, output)
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP,
+            SOURCE_PLATFORM,
+            {"topics": TOPICS},
+            require_auto_enabled=require_auto,
+        )
+        == "started"
+    )
+    await asyncio.gather(*tuple(rig.handler._background_tasks))
+    rig.comic_service.generate_comic.assert_awaited_once_with(
+        TOPICS, SOURCE_GROUP, SOURCE_UMO
+    )
+    rig.handler.feishu_sender.send_comic.assert_awaited_once()
+    bot_config, image, caption = rig.handler.feishu_sender.send_comic.await_args.args
+    assert bot_config.user_id == "ou_abc"
+    assert bot_config.user_id_type == "open_id"
+    if output == "bytes":
+        image_path = Path(image)
+        assert image_path.name.startswith(f"comic_{SOURCE_GROUP}_")
+        assert image_path.read_bytes() == PNG_BYTES
+    else:
+        assert image == IMAGE_URL
+    assert caption.startswith(f"来源群：{SOURCE_GROUP}")
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.parametrize("winner", ["forward", "official"])
+@pytest.mark.asyncio
+async def test_feishu_comic_yields_to_higher_priority_group_targets(
+    feishu_comic_rig, winner
+):
+    rig = feishu_comic_rig
+    official = SimpleNamespace(
+        platform_id="official-main",
+        send_image=AsyncMock(return_value=True),
+        send_private_image=AsyncMock(return_value=True),
+    )
+    rig.adapters["official-main"] = official
+    rig.settings.update(
+        forward_group_enabled=winner == "forward",
+        qq_official_enabled=winner == "official",
+        qq_official_target="official-main:GroupMessage:official-group",
+    )
+
+    await generate(rig)
+
+    rig.handler.feishu_sender.send_comic.assert_not_awaited()
+    if winner == "forward":
+        assert rig.target.send_image.await_args.args[0] == TARGET_GROUP
+    else:
+        assert official.send_image.await_args.args[0] == "official-group"
+
+
+@pytest.mark.parametrize("failure", ["rejected", "exception", "missing_config"])
+@pytest.mark.asyncio
+async def test_feishu_comic_failure_never_returns_to_source(
+    feishu_comic_rig, failure
+):
+    rig = feishu_comic_rig
+    if failure == "rejected":
+        rig.handler.feishu_sender.send_comic.return_value = False
+    elif failure == "exception":
+        rig.handler.feishu_sender.send_comic.side_effect = RuntimeError("推送被拒绝")
+    else:
+        rig.settings["feishu_user_id"] = ""
+
+    await generate(rig)
+
+    if failure == "missing_config":
+        rig.handler.feishu_sender.send_comic.assert_not_awaited()
+        rig.comic_service.generate_comic.assert_not_awaited()
+    else:
+        rig.comic_service.generate_comic.assert_awaited_once()
+        rig.handler.feishu_sender.send_comic.assert_awaited_once()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_feishu_comic_rechecks_target_after_drawing(feishu_comic_rig):
+    rig = feishu_comic_rig
+
+    async def draw(*_args):
+        rig.settings["feishu_user_id"] = "ou_new"
+        return PNG_BYTES, None
+
+    rig.comic_service.generate_comic.side_effect = draw
+    await generate(rig)
+
+    bot_config, _image, _caption = rig.handler.feishu_sender.send_comic.await_args.args
+    assert bot_config.user_id == "ou_new"
+
+
+@pytest.mark.asyncio
+async def test_feishu_comic_target_resolves_as_private_target(feishu_comic_rig):
+    rig = feishu_comic_rig
+    rig.settings["feishu_user_id_type"] = "union_id"
+
+    assert rig.handler._resolve_delivery_target(SOURCE_GROUP, SOURCE_PLATFORM) == (
+        FeishuPrivateTarget("ou_abc", "union_id")
+    )

@@ -9,15 +9,17 @@ import json
 import os
 import random
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api.star import StarTools
 
 from ...domain.value_objects.report_delivery import (
+    ChatReportTarget,
+    FeishuBotConfig,
     GroupReportTarget,
     QQOfficialPrivateTarget,
-    ReportTarget,
+    ReportDeliveryMode,
     ServerChanBotConfig,
 )
 from ...shared.constants import (
@@ -37,8 +39,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from astrbot.api import AstrBotConfig
-
-    from ...domain.value_objects.report_delivery import ReportDeliveryMode
 
 
 class ConfigManager:
@@ -310,6 +310,14 @@ class ConfigManager:
         val = self._get_group("basic").get("output_format", ["image"])
         return val if isinstance(val, list) else [val]
 
+    # 独立开关与其在投递模式字符串中的通道名，顺序决定组合命名。
+    _DELIVERY_CHANNEL_SWITCHES: tuple[tuple[str, ReportDeliveryMode], ...] = (
+        ("forward_group_enabled", "forward_group"),
+        ("qq_official_enabled", "qq_official"),
+        ("serverchan_enabled", "serverchan"),
+        ("feishu_enabled", "feishu"),
+    )
+
     def get_report_delivery_mode(self) -> ReportDeliveryMode:
         """解析独立通道和停止原群开关，兼容尚未迁移的旧配置。
 
@@ -327,37 +335,17 @@ class ConfigManager:
         mode: object = group.get("destination", "independent")
         if mode not in ("source_group", "forward_group", "serverchan", "independent"):
             raise ValueError("总结投递方式无效，请检查总结投递配置")
-        if any(
-            key in group
-            for key in (
-                "forward_group_enabled",
-                "qq_official_enabled",
-                "serverchan_enabled",
-            )
-        ):
-            forward: object = group.get("forward_group_enabled", False)
-            qq_official: object = group.get("qq_official_enabled", False)
-            serverchan: object = group.get("serverchan_enabled", False)
-            if (
-                not isinstance(forward, bool)
-                or not isinstance(qq_official, bool)
-                or not isinstance(serverchan, bool)
-            ):
-                raise ValueError("总结转发开关必须是布尔值，请检查总结投递配置")
-            if qq_official:
-                if forward and serverchan:
-                    return "forward_group_and_qq_official_and_serverchan"
-                if forward:
-                    return "forward_group_and_qq_official"
-                if serverchan:
-                    return "qq_official_and_serverchan"
-                return "qq_official"
-            if forward and serverchan:
-                return "forward_group_and_serverchan"
-            if forward:
-                return "forward_group"
-            if serverchan:
-                return "serverchan"
+        if any(key in group for key, _ in self._DELIVERY_CHANNEL_SWITCHES):
+            enabled_channels: list[ReportDeliveryMode] = []
+            for key, channel in self._DELIVERY_CHANNEL_SWITCHES:
+                switch: object = group.get(key, False)
+                if not isinstance(switch, bool):
+                    raise ValueError("总结转发开关必须是布尔值，请检查总结投递配置")
+                if switch:
+                    enabled_channels.append(channel)
+            if enabled_channels:
+                # 通道名按固定顺序拼接，其全部组合均已收录在 ReportDeliveryMode 枚举中。
+                return cast("ReportDeliveryMode", "_and_".join(enabled_channels))
             return source_mode
 
         if mode in ("source_group", "independent"):
@@ -407,7 +395,7 @@ class ConfigManager:
             raise ValueError("转发目标不能是原群，请填写另外一个群")
         return GroupReportTarget(group_id=group_id, platform_id=platform_id)
 
-    def get_qq_official_report_target(self) -> ReportTarget:
+    def get_qq_official_report_target(self) -> ChatReportTarget:
         """解析 QQ 官方群聊或私聊的完整会话目标。
 
         Returns:
@@ -482,6 +470,35 @@ class ConfigManager:
         if not isinstance(silent, bool):
             raise ValueError("Server酱静默推送必须是布尔值")
         return ServerChanBotConfig(token=token.strip(), chat_id=chat_id, silent=silent)
+
+    def get_feishu_bot_config(self) -> FeishuBotConfig:
+        """读取飞书自建应用凭证与接收用户标识。
+
+        Returns:
+            校验后的应用凭据和私聊推送配置。
+
+        Raises:
+            ValueError: 应用 ID、密钥或用户标识为空，或用户 ID 类型无效。
+        """
+        group = self._get_group("report_delivery")
+        app_id: object = group.get("feishu_app_id", "")
+        if not isinstance(app_id, str) or not app_id.strip():
+            raise ValueError("飞书应用 App ID 不能为空")
+        app_secret: object = group.get("feishu_app_secret", "")
+        if not isinstance(app_secret, str) or not app_secret.strip():
+            raise ValueError("飞书应用 App Secret 不能为空")
+        user_id: object = group.get("feishu_user_id", "")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("飞书接收用户 ID 不能为空")
+        user_id_type: object = group.get("feishu_user_id_type", "open_id")
+        if user_id_type not in ("open_id", "user_id", "union_id"):
+            raise ValueError("飞书用户 ID 类型必须是 open_id、user_id 或 union_id")
+        return FeishuBotConfig(
+            app_id=app_id.strip(),
+            app_secret=app_secret.strip(),
+            user_id=user_id.strip(),
+            user_id_type=user_id_type,
+        )
 
     def get_qq_official_t2i_summary_dashboard_enabled(self) -> bool:
         """是否启用 QQ 官方 T2I 概览图。"""

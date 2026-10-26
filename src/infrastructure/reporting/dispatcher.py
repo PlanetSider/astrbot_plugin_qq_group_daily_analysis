@@ -12,16 +12,18 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from ...domain.value_objects.report_delivery import (
+    FEISHU_DELIVERY_MODES,
     FORWARD_GROUP_DELIVERY_MODES,
     QQ_OFFICIAL_DELIVERY_MODES,
     SERVERCHAN_DELIVERY_MODES,
+    ChatReportTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
-    ReportTarget,
 )
 from ...shared.constants import AnalysisStage
 from ...shared.trace_context import TraceContext
 from ...utils.logger import logger
+from ..messaging.feishu_bot_sender import FeishuBotSender
 from ..messaging.serverchan_bot_sender import ServerChanBotSender
 from .html_renderer import bind_group_html_renderer
 
@@ -49,6 +51,7 @@ class ReportDispatcher:
     report_generator: ReportGenerator | None
     message_sender: MessageSender
     serverchan_sender: ServerChanBotSender
+    feishu_sender: FeishuBotSender
 
     def __init__(
         self,
@@ -60,6 +63,7 @@ class ReportDispatcher:
         self.report_generator = report_generator
         self.message_sender = message_sender
         self.serverchan_sender = ServerChanBotSender()
+        self.feishu_sender = FeishuBotSender()
         self._html_render_func: Callable[..., Awaitable[str | bytes | None]] | None = (
             None
         )
@@ -86,7 +90,7 @@ class ReportDispatcher:
         )
 
     @staticmethod
-    def _target_trace_payload(target: ReportTarget) -> dict[str, str]:
+    def _target_trace_payload(target: ChatReportTarget) -> dict[str, str]:
         """生成各报告格式共用的投递目标追踪字段。
 
         Args:
@@ -172,6 +176,7 @@ class ReportDispatcher:
         forward_enabled = mode in FORWARD_GROUP_DELIVERY_MODES
         qq_official_enabled = mode in QQ_OFFICIAL_DELIVERY_MODES
         serverchan_enabled = mode in SERVERCHAN_DELIVERY_MODES
+        feishu_enabled = mode in FEISHU_DELIVERY_MODES
         channel_results: dict[str, bool] = {}
         group_channels: list[str] = []
         if mode == "source_group" or forward_enabled:
@@ -243,6 +248,16 @@ class ReportDispatcher:
                 logger.error(f"[{trace_id}] Server酱总结投递异常：{type(exc).__name__}")
                 channel_results["serverchan"] = False
 
+        if feishu_enabled:
+            try:
+                channel_results["feishu"] = await self._dispatch_feishu(
+                    group_id, analysis_result, source_label=source_label
+                )
+            except Exception as exc:
+                # 应用密钥在请求体中出现，禁止输出异常正文及堆栈。
+                logger.error(f"[{trace_id}] 飞书总结投递异常：{type(exc).__name__}")
+                channel_results["feishu"] = False
+
         if trace:
             trace.metadata["report_delivery_results"] = channel_results
         sent_any = any(channel_results.values())
@@ -288,12 +303,48 @@ class ReportDispatcher:
                 dispatch_span.setdefault("payload", {})["success"] = sent
             return sent
 
+    async def _dispatch_feishu(
+        self,
+        group_id: str,
+        analysis_result: AnalysisResultPayload,
+        *,
+        source_label: str = "",
+    ) -> bool:
+        """独立生成并通过飞书机器人私聊推送含来源标识的文本总结。"""
+        bot_config = self.config_manager.get_feishu_bot_config()
+        if not self.report_generator:
+            logger.error("[分发器] 报告生成器未初始化，无法推送飞书总结")
+            return False
+        text = self.report_generator.generate_text_report(analysis_result)
+        trace = TraceContext.current()
+        with (
+            trace.span(
+                AnalysisStage.DISPATCH_REPORT,
+                {
+                    "platform": "feishu",
+                    "group_id": group_id,
+                    "target_user_id": bot_config.user_id,
+                    "formats": ["text"],
+                    "format": "text",
+                },
+            )
+            if trace
+            else nullcontext()
+        ) as dispatch_span:
+            sent = await self.feishu_sender.send_summary(
+                bot_config,
+                f"📊 每日群聊分析报告\n{source_label or f'来源群：{group_id}'}\n\n{text}",
+            )
+            if dispatch_span:
+                dispatch_span.setdefault("payload", {})["success"] = sent
+            return sent
+
     async def _dispatch_group_reports(
         self,
         group_id: str,
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
-        target: ReportTarget,
+        target: ChatReportTarget,
         output_formats: list[str] | None,
         *,
         source_label: str = "",
@@ -356,7 +407,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: ReportTarget | None = None,
+        target: ChatReportTarget | None = None,
         source_label: str = "",
     ) -> bool:
         trace_id = TraceContext.get()
@@ -620,7 +671,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: ReportTarget | None = None,
+        target: ChatReportTarget | None = None,
         source_label: str = "",
     ) -> bool:
         trace_id = TraceContext.get()
@@ -850,7 +901,7 @@ class ReportDispatcher:
         analysis_result: AnalysisResultPayload,
         platform_id: str | None,
         *,
-        target: ReportTarget | None = None,
+        target: ChatReportTarget | None = None,
         source_label: str = "",
     ) -> bool:
         """生成源群的文本报告并发送到指定目标。

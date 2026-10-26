@@ -11,9 +11,9 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, TypeGuard
 
 from ...domain.value_objects.report_delivery import (
+    ChatReportTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
-    ReportTarget,
 )
 from ...shared.constants import PLUGIN_NAME
 from ...utils.logger import logger
@@ -407,10 +407,10 @@ class BotManager:
 
     def validate_qq_official_report_target(
         self,
-        target: ReportTarget,
+        target: ChatReportTarget,
         source_group_id: str,
         source_platform_id: str | None,
-    ) -> ReportTarget:
+    ) -> ChatReportTarget:
         """校验 QQ 官方群聊或私聊目标的实际平台实例。
 
         Args:

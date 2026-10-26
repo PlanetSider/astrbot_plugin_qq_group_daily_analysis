@@ -15,6 +15,14 @@ ReportDeliveryMode = Literal[
     "forward_group_and_qq_official",
     "qq_official_and_serverchan",
     "forward_group_and_qq_official_and_serverchan",
+    "feishu",
+    "forward_group_and_feishu",
+    "qq_official_and_feishu",
+    "serverchan_and_feishu",
+    "forward_group_and_serverchan_and_feishu",
+    "forward_group_and_qq_official_and_feishu",
+    "qq_official_and_serverchan_and_feishu",
+    "forward_group_and_qq_official_and_serverchan_and_feishu",
 ]
 
 FORWARD_GROUP_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
@@ -23,6 +31,10 @@ FORWARD_GROUP_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
         "forward_group_and_serverchan",
         "forward_group_and_qq_official",
         "forward_group_and_qq_official_and_serverchan",
+        "forward_group_and_feishu",
+        "forward_group_and_serverchan_and_feishu",
+        "forward_group_and_qq_official_and_feishu",
+        "forward_group_and_qq_official_and_serverchan_and_feishu",
     }
 )
 QQ_OFFICIAL_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
@@ -31,6 +43,10 @@ QQ_OFFICIAL_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
         "forward_group_and_qq_official",
         "qq_official_and_serverchan",
         "forward_group_and_qq_official_and_serverchan",
+        "qq_official_and_feishu",
+        "forward_group_and_qq_official_and_feishu",
+        "qq_official_and_serverchan_and_feishu",
+        "forward_group_and_qq_official_and_serverchan_and_feishu",
     }
 )
 SERVERCHAN_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
@@ -39,7 +55,27 @@ SERVERCHAN_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
         "forward_group_and_serverchan",
         "qq_official_and_serverchan",
         "forward_group_and_qq_official_and_serverchan",
+        "serverchan_and_feishu",
+        "forward_group_and_serverchan_and_feishu",
+        "qq_official_and_serverchan_and_feishu",
+        "forward_group_and_qq_official_and_serverchan_and_feishu",
     }
+)
+FEISHU_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
+    {
+        "feishu",
+        "forward_group_and_feishu",
+        "qq_official_and_feishu",
+        "serverchan_and_feishu",
+        "forward_group_and_serverchan_and_feishu",
+        "forward_group_and_qq_official_and_feishu",
+        "qq_official_and_serverchan_and_feishu",
+        "forward_group_and_qq_official_and_serverchan_and_feishu",
+    }
+)
+# 漫画投递优先级为指定群、QQ 官方、飞书，仅在未启用更高优先级群目标时发飞书。
+FEISHU_COMIC_DELIVERY_MODES: frozenset[ReportDeliveryMode] = frozenset(
+    FEISHU_DELIVERY_MODES - FORWARD_GROUP_DELIVERY_MODES - QQ_OFFICIAL_DELIVERY_MODES
 )
 
 
@@ -71,7 +107,22 @@ class QQOfficialPrivateTarget:
         return self.user_id
 
 
-ReportTarget = GroupReportTarget | QQOfficialPrivateTarget
+@dataclass(frozen=True)
+class FeishuPrivateTarget:
+    """飞书机器人私聊漫画目标，使用应用内用户标识。"""
+
+    user_id: str
+    user_id_type: str = "open_id"
+
+    @property
+    def session_id(self) -> str:
+        """获取实际投递的私聊用户标识。"""
+        return self.user_id
+
+
+# 总结投递的群聊或私聊会话目标；飞书目标仅用于漫画私聊投递。
+ChatReportTarget = GroupReportTarget | QQOfficialPrivateTarget
+ReportTarget = ChatReportTarget | FeishuPrivateTarget
 
 
 @dataclass(frozen=True)
@@ -81,3 +132,13 @@ class ServerChanBotConfig:
     token: str = field(repr=False)
     chat_id: int
     silent: bool = False
+
+
+@dataclass(frozen=True)
+class FeishuBotConfig:
+    """飞书自建应用机器人凭据和接收用户，密钥不参与对象展示。"""
+
+    app_id: str
+    app_secret: str = field(repr=False)
+    user_id: str
+    user_id_type: str = "open_id"

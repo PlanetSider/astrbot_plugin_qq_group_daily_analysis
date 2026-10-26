@@ -206,7 +206,7 @@
     "report_delivery": {
         "description": "总结投递",
         "type": "object",
-        "hint": "指定群、QQ 官方机器人和 Server酱可分别或同时开启，开启任一通道后停止发送原群总结。独立开启“停止向原群发送”时，即使没有转发通道也跳过总结和漫画投递，分析及本地记录照常保留；发送失败不会回发原群。漫画优先发指定群，其次发 QQ 官方目标。",
+        "hint": "指定群、QQ 官方机器人、Server酱和飞书机器人可分别或同时开启，开启任一通道后停止发送原群总结。独立开启“停止向原群发送”时，即使没有转发通道也跳过总结和漫画投递，分析及本地记录照常保留；发送失败不会回发原群。漫画优先发指定群，其次发 QQ 官方目标，最后发飞书机器人。",
         "items": {
             "destination": {
                 "type": "string",
@@ -289,6 +289,42 @@
                 "default": false,
                 "condition": {"serverchan_enabled": true},
                 "hint": "默认关闭，会推送到消息通道。开启后仅在 Server酱³ 内保存消息，不推送到通知通道。"
+            },
+            "feishu_enabled": {
+                "type": "bool",
+                "description": "通过飞书机器人私聊发送",
+                "default": false,
+                "hint": "使用飞书企业自建应用机器人向指定用户发送私聊文本总结，不受图片/HTML 输出格式限制；未开启指定群和 QQ 官方时漫画也私聊发送（需开通 im:resource 图片上传权限）。可与指定群、QQ 官方机器人、Server酱同时开启；只开启本通道时停止发送原群总结。"
+            },
+            "feishu_app_id": {
+                "type": "string",
+                "description": "飞书应用 App ID",
+                "default": "",
+                "condition": {"feishu_enabled": true},
+                "hint": "在飞书开放平台创建企业自建应用后，在“凭证与基础信息”页复制 App ID（cli_ 开头）。机器人需开通接收和发送消息相关权限，并创建版本发布后生效。"
+            },
+            "feishu_app_secret": {
+                "type": "string",
+                "description": "飞书应用 App Secret",
+                "default": "",
+                "condition": {"feishu_enabled": true},
+                "hint": "在飞书开放平台“凭证与基础信息”页复制 App Secret，仅用于换取租户访问凭证，不会写入日志。"
+            },
+            "feishu_user_id": {
+                "type": "string",
+                "description": "飞书接收用户 ID",
+                "default": "",
+                "condition": {"feishu_enabled": true},
+                "hint": "接收总结私聊消息的用户标识，类型须与下方选项一致。open_id 以 ou_ 开头，union_id 以 on_ 开头；可在用户通过机器人会话调用 API 或在管理后台查询。"
+            },
+            "feishu_user_id_type": {
+                "type": "string",
+                "description": "飞书用户 ID 类型",
+                "default": "open_id",
+                "options": ["open_id", "user_id", "union_id"],
+                "labels": ["open_id（推荐）", "user_id", "union_id"],
+                "condition": {"feishu_enabled": true},
+                "hint": "接收用户标识的类型，必须与上方填写的用户 ID 匹配。应用可用性和用户可见范围会影响发送结果。"
             }
         }
     },

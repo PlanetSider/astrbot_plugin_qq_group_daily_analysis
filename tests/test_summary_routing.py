@@ -1,6 +1,7 @@
 """总结投递配置、机器人接口和禁止回发原群的回归测试。"""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -8,12 +9,14 @@ import pytest
 
 from src.application.handlers.analysis_command_handler import AnalysisCommandHandler
 from src.domain.value_objects.report_delivery import (
+    FeishuBotConfig,
     GroupReportTarget,
     ServerChanBotConfig,
 )
 from src.infrastructure.config.config_manager import ConfigManager
 from src.infrastructure.config.config_migrator import ConfigMigrator
-from src.infrastructure.messaging import serverchan_bot_sender
+from src.infrastructure.messaging import feishu_bot_sender, serverchan_bot_sender
+from src.infrastructure.messaging.feishu_bot_sender import FeishuBotSender
 from src.infrastructure.messaging.serverchan_bot_sender import ServerChanBotSender
 from src.infrastructure.reporting.dispatcher import ReportDispatcher
 from src.shared.trace_context import TraceContext, _current_trace
@@ -266,6 +269,9 @@ def make_dispatcher(
             "forward_target": f"target-platform:GroupMessage:{target_group}",
             "serverchan_bot_token": "secret-token",
             "serverchan_chat_id": "123",
+            "feishu_app_id": "cli_xxx",
+            "feishu_app_secret": "secret",
+            "feishu_user_id": "ou_abc",
         }
     )
     config.get_output_format = Mock(return_value=[output_format])
@@ -666,3 +672,547 @@ def test_invalid_serverchan_config_does_not_undo_successful_group_delivery(
     )
     dispatcher.serverchan_sender.send_summary.assert_not_awaited()
     source.send_text_report.assert_not_awaited()
+
+
+# ================================================================
+# 飞书机器人通道：配置校验、接口契约与投递回退
+# ================================================================
+
+
+@pytest.mark.parametrize("user_id_type", ["open_id", "user_id", "union_id"])
+def test_feishu_config_accepts_credentials_and_trims_spaces(user_id_type):
+    config = make_config(
+        {
+            "feishu_app_id": " cli_xxx ",
+            "feishu_app_secret": " secret ",
+            "feishu_user_id": " ou_abc ",
+            "feishu_user_id_type": user_id_type,
+        }
+    ).get_feishu_bot_config()
+    assert config == FeishuBotConfig("cli_xxx", "secret", "ou_abc", user_id_type)
+    assert "secret" not in repr(config)
+
+
+def test_feishu_config_defaults_to_open_id():
+    config = make_config(
+        {
+            "feishu_app_id": "cli_xxx",
+            "feishu_app_secret": "secret",
+            "feishu_user_id": "ou_abc",
+        }
+    ).get_feishu_bot_config()
+    assert config.user_id_type == "open_id"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("feishu_app_id", ""),
+        ("feishu_app_id", "   "),
+        ("feishu_app_id", None),
+        ("feishu_app_id", 123),
+        ("feishu_app_secret", ""),
+        ("feishu_app_secret", "   "),
+        ("feishu_app_secret", None),
+        ("feishu_app_secret", 123),
+        ("feishu_user_id", ""),
+        ("feishu_user_id", "   "),
+        ("feishu_user_id", None),
+        ("feishu_user_id", 123),
+    ],
+)
+def test_feishu_config_requires_nonempty_credentials(key, value):
+    settings = {
+        "feishu_app_id": "cli_xxx",
+        "feishu_app_secret": "secret",
+        "feishu_user_id": "ou_abc",
+    }
+    settings[key] = value
+    with pytest.raises(ValueError, match="不能为空"):
+        make_config(settings).get_feishu_bot_config()
+
+
+@pytest.mark.parametrize("user_id_type", ["", "openid", "ou_", None, True, 1])
+def test_feishu_config_rejects_invalid_user_id_type(user_id_type):
+    with pytest.raises(ValueError, match="飞书用户 ID 类型"):
+        make_config(
+            {
+                "feishu_app_id": "cli_xxx",
+                "feishu_app_secret": "secret",
+                "feishu_user_id": "ou_abc",
+                "feishu_user_id_type": user_id_type,
+            }
+        ).get_feishu_bot_config()
+
+
+_FEISHU_DEFAULT_TOKEN_BODY = {
+    "code": 0,
+    "tenant_access_token": "t-token",
+    "expire": 7200,
+}
+_FEISHU_DEFAULT_UPLOAD_BODY = {"code": 0, "data": {"image_key": "img_v2_xxx"}}
+_FEISHU_DEFAULT_SEND_BODY = {"code": 0, "msg": "success", "data": {"message_id": "om_xxx"}}
+
+
+def stub_feishu_http(
+    monkeypatch,
+    *,
+    token_status=200,
+    token_body=_FEISHU_DEFAULT_TOKEN_BODY,
+    status=200,
+    body=None,
+    error=None,
+):
+    """按顺序返回访问凭证与消息发送两个响应的 HTTP 桩。"""
+    token_response = MagicMock()
+    token_response.status = token_status
+    token_response.__aenter__ = AsyncMock(return_value=token_response)
+    token_response.__aexit__ = AsyncMock(return_value=False)
+    token_response.json = AsyncMock(return_value=token_body)
+    send_response = MagicMock()
+    send_response.status = status
+    send_response.__aenter__ = AsyncMock(return_value=send_response)
+    send_response.__aexit__ = AsyncMock(return_value=False)
+    send_response.json = AsyncMock(return_value=body, side_effect=error)
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.post.side_effect = [token_response, send_response]
+    factory = Mock(return_value=session)
+    monkeypatch.setattr(feishu_bot_sender.aiohttp, "ClientSession", factory)
+    return factory, session, token_response, send_response
+
+
+def make_feishu_config():
+    return FeishuBotConfig("cli_xxx", "secret-value", "ou_abc", "open_id")
+
+
+def test_feishu_sends_documented_payload_with_tenant_token(monkeypatch):
+    factory, session, _, send_response = stub_feishu_http(
+        monkeypatch,
+        body={"code": 0, "msg": "success", "data": {"message_id": "om_xxx"}},
+    )
+    assert (
+        asyncio.run(FeishuBotSender().send_summary(make_feishu_config(), "总结正文"))
+        is True
+    )
+    token_call, send_call = session.post.call_args_list
+    assert token_call.args[0] == (
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    )
+    assert token_call.kwargs["json"] == {
+        "app_id": "cli_xxx",
+        "app_secret": "secret-value",
+    }
+    assert send_call.args[0] == "https://open.feishu.cn/open-apis/im/v1/messages"
+    assert send_call.kwargs["params"] == {"receive_id_type": "open_id"}
+    assert send_call.kwargs["headers"] == {"Authorization": "Bearer t-token"}
+    assert send_call.kwargs["json"] == {
+        "receive_id": "ou_abc",
+        "msg_type": "text",
+        "content": json.dumps({"text": "总结正文"}, ensure_ascii=False),
+    }
+    assert factory.call_args.kwargs["timeout"].total == 30
+    send_response.json.assert_awaited_once()
+
+
+def test_feishu_message_uses_selected_receive_id_type(monkeypatch):
+    _, session, _, _ = stub_feishu_http(
+        monkeypatch,
+        token_body={"code": 0, "tenant_access_token": "t-token"},
+        body={"code": 0, "msg": "success", "data": {"message_id": "om_xxx"}},
+    )
+    config = FeishuBotConfig("cli_xxx", "secret-value", "u_abc", "user_id")
+    assert asyncio.run(FeishuBotSender().send_summary(config, "正文")) is True
+    assert session.post.call_args_list[1].kwargs["params"] == {
+        "receive_id_type": "user_id"
+    }
+    assert session.post.call_args_list[1].kwargs["json"]["receive_id"] == "u_abc"
+
+
+@pytest.mark.parametrize(
+    ("token_status", "token_body"),
+    [
+        (401, {"code": 0, "tenant_access_token": "t-token"}),
+        (200, {"code": 99991663, "msg": "app_secret 无效"}),
+        (200, {"code": 0}),
+        (200, {"code": 0, "tenant_access_token": ""}),
+        (200, {"code": 0, "tenant_access_token": 123}),
+        (200, None),
+        (200, []),
+    ],
+)
+def test_feishu_does_not_send_message_when_token_is_unavailable(
+    monkeypatch, token_status, token_body
+):
+    _, session, _, _ = stub_feishu_http(
+        monkeypatch, token_status=token_status, token_body=token_body
+    )
+    assert (
+        asyncio.run(FeishuBotSender().send_summary(make_feishu_config(), "正文"))
+        is False
+    )
+    assert session.post.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (403, {"code": 0, "msg": "success"}),
+        (500, {"code": 0, "msg": "success"}),
+        (200, {"code": 230013, "msg": "receive_id 无效"}),
+        (200, {"code": 0}),
+        (200, {}),
+        (200, None),
+        (200, []),
+    ],
+)
+def test_feishu_does_not_treat_rejected_or_invalid_responses_as_success(
+    monkeypatch, status, body
+):
+    _, _, _, _ = stub_feishu_http(monkeypatch, status=status, body=body)
+    assert (
+        asyncio.run(FeishuBotSender().send_summary(make_feishu_config(), "正文"))
+        is False
+    )
+
+
+def test_feishu_errors_do_not_log_credentials(monkeypatch):
+    stub_feishu_http(monkeypatch, error=ValueError("invalid JSON secret-value"))
+    log = Mock()
+    monkeypatch.setattr(feishu_bot_sender, "logger", log)
+    assert (
+        asyncio.run(FeishuBotSender().send_summary(make_feishu_config(), "正文"))
+        is False
+    )
+    log.error.assert_called_once_with("[飞书机器人] 推送异常：ValueError")
+    assert "secret-value" not in repr(log.mock_calls)
+
+
+def test_feishu_empty_summary_does_not_start_request(monkeypatch):
+    factory, _, _, _ = stub_feishu_http(monkeypatch, body={"code": 0})
+    assert (
+        asyncio.run(FeishuBotSender().send_summary(make_feishu_config(), " \n "))
+        is False
+    )
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("forward", "serverchan", "feishu", "mode"),
+    [
+        (False, False, True, "feishu"),
+        (True, False, True, "forward_group_and_feishu"),
+        (False, True, True, "serverchan_and_feishu"),
+        (False, False, False, "source_group"),
+        (True, True, True, "forward_group_and_serverchan_and_feishu"),
+    ],
+)
+def test_feishu_switch_resolves_delivery_combinations(
+    forward, serverchan, feishu, mode
+):
+    config = make_config(
+        {
+            "destination": "independent",
+            "forward_group_enabled": forward,
+            "serverchan_enabled": serverchan,
+            "feishu_enabled": feishu,
+        }
+    )
+    assert config.get_report_delivery_mode() == mode
+
+
+@pytest.mark.parametrize(
+    ("qq_official", "serverchan", "feishu", "mode"),
+    [
+        (True, False, True, "qq_official_and_feishu"),
+        (True, True, True, "qq_official_and_serverchan_and_feishu"),
+        (True, True, False, "qq_official_and_serverchan"),
+        (True, False, False, "qq_official"),
+    ],
+)
+def test_qq_official_switch_resolves_delivery_combinations(
+    qq_official, serverchan, feishu, mode
+):
+    config = make_config(
+        {
+            "destination": "independent",
+            "qq_official_enabled": qq_official,
+            "serverchan_enabled": serverchan,
+            "feishu_enabled": feishu,
+        }
+    )
+    assert config.get_report_delivery_mode() == mode
+
+
+def test_all_delivery_switches_require_boolean_values():
+    with pytest.raises(ValueError, match="开关必须是布尔值"):
+        make_config({"feishu_enabled": "true"}).get_report_delivery_mode()
+
+
+def test_invalid_feishu_config_does_not_undo_successful_group_delivery(
+    tmp_path,
+):
+    dispatcher, source, target = make_dispatcher(tmp_path)
+    settings = dispatcher.config_manager.config["report_delivery"]
+    settings.update(
+        destination="independent", forward_group_enabled=True, feishu_enabled=True
+    )
+    settings["feishu_app_id"] = ""
+    target.send_text_report.return_value = True
+    dispatcher.feishu_sender.send_summary = AsyncMock()
+
+    assert (
+        asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
+    )
+    target.send_text_report.assert_awaited_once_with(
+        "target-group", "来源群：source-group\n\n源群总结正文"
+    )
+    dispatcher.feishu_sender.send_summary.assert_not_awaited()
+    source.send_text_report.assert_not_awaited()
+
+
+def test_dual_bot_channels_attempt_both_and_record_partial_results(tmp_path):
+    dispatcher, source, target = make_dispatcher(tmp_path)
+    dispatcher.config_manager.config["report_delivery"].update(
+        destination="independent", serverchan_enabled=True, feishu_enabled=True
+    )
+    dispatcher.serverchan_sender.send_summary = AsyncMock(return_value=True)
+    dispatcher.feishu_sender.send_summary = AsyncMock(return_value=False)
+    trace = TraceContext(group_id="source-group", platform="source-platform")
+    token = _current_trace.set(trace)
+    try:
+        sent = asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform"))
+    finally:
+        _current_trace.reset(token)
+
+    assert sent is True
+    dispatcher.serverchan_sender.send_summary.assert_awaited_once()
+    dispatcher.feishu_sender.send_summary.assert_awaited_once()
+    assert trace.metadata["report_delivery_results"] == {
+        "serverchan": True,
+        "feishu": False,
+    }
+    source.send_text_report.assert_not_awaited()
+
+
+def test_feishu_delivery_prepends_source_label(tmp_path):
+    dispatcher, source, target = make_dispatcher(tmp_path)
+    dispatcher.config_manager.config["report_delivery"].update(
+        destination="independent", feishu_enabled=True
+    )
+    dispatcher.feishu_sender.send_summary = AsyncMock(return_value=True)
+
+    assert (
+        asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
+    )
+    text = dispatcher.feishu_sender.send_summary.await_args.args[1]
+    assert text.startswith("📊 每日群聊分析报告\n来源群：source-group\n\n")
+    assert text.endswith("源群总结正文")
+    source.send_text_report.assert_not_awaited()
+    target.send_text_report.assert_not_awaited()
+
+
+# ================================================================
+# 飞书机器人漫画：图片上传、富文本消息与失败处理
+# ================================================================
+
+
+def stub_feishu_comic_http(
+    monkeypatch,
+    *,
+    upload_body=_FEISHU_DEFAULT_UPLOAD_BODY,
+    status=200,
+    body=_FEISHU_DEFAULT_SEND_BODY,
+    download_status=200,
+    download_body=b"remote-image",
+    send_error=None,
+):
+    """按顺序返回访问凭证、图片上传与消息发送三个响应的 HTTP 桩。"""
+    token_response = MagicMock()
+    token_response.status = 200
+    token_response.__aenter__ = AsyncMock(return_value=token_response)
+    token_response.__aexit__ = AsyncMock(return_value=False)
+    token_response.json = AsyncMock(
+        return_value={"code": 0, "tenant_access_token": "t-token"}
+    )
+    upload_response = MagicMock()
+    upload_response.status = 200
+    upload_response.__aenter__ = AsyncMock(return_value=upload_response)
+    upload_response.__aexit__ = AsyncMock(return_value=False)
+    upload_response.json = AsyncMock(return_value=upload_body)
+    send_response = MagicMock()
+    send_response.status = status
+    send_response.__aenter__ = AsyncMock(return_value=send_response)
+    send_response.__aexit__ = AsyncMock(return_value=False)
+    send_response.json = AsyncMock(return_value=body)
+    download_response = MagicMock()
+    download_response.status = download_status
+    download_response.__aenter__ = AsyncMock(return_value=download_response)
+    download_response.__aexit__ = AsyncMock(return_value=False)
+    download_response.read = AsyncMock(return_value=download_body)
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    if send_error is not None:
+        session.post.side_effect = send_error
+    else:
+        session.post.side_effect = [token_response, upload_response, send_response]
+    session.get = Mock(return_value=download_response)
+    factory = Mock(return_value=session)
+    monkeypatch.setattr(feishu_bot_sender.aiohttp, "ClientSession", factory)
+    return factory, session, upload_response, send_response
+
+
+def test_feishu_comic_uploads_local_image_and_sends_post_message(
+    monkeypatch, tmp_path
+):
+    comic_file = tmp_path / "comic.png"
+    comic_file.write_bytes(b"\x89PNG comic")
+    _, session, upload_response, _ = stub_feishu_comic_http(monkeypatch)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(make_feishu_config(), str(comic_file), "来源群：A")
+        )
+        is True
+    )
+    upload_call, send_call = session.post.call_args_list[1:]
+    assert upload_call.args[0] == "https://open.feishu.cn/open-apis/im/v1/images"
+    assert upload_call.kwargs["headers"] == {"Authorization": "Bearer t-token"}
+    assert upload_response.json.await_count == 1
+    assert send_call.args[0] == "https://open.feishu.cn/open-apis/im/v1/messages"
+    assert send_call.kwargs["params"] == {"receive_id_type": "open_id"}
+    assert send_call.kwargs["headers"] == {"Authorization": "Bearer t-token"}
+    assert send_call.kwargs["json"]["receive_id"] == "ou_abc"
+    assert send_call.kwargs["json"]["msg_type"] == "post"
+    content = json.loads(send_call.kwargs["json"]["content"])
+    zh_cn = content["post"]["zh_cn"]
+    assert zh_cn["title"] == "📊 每日群聊漫画"
+    assert zh_cn["content"][0][0]["text"] == "来源群：A\n"
+    assert zh_cn["content"][1][0]["image_key"] == "img_v2_xxx"
+
+
+def test_feishu_comic_downloads_remote_image_before_upload(monkeypatch):
+    _, session, upload_response, _ = stub_feishu_comic_http(monkeypatch)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(
+                make_feishu_config(), "https://example.com/comic.png", ""
+            )
+        )
+        is True
+    )
+    assert session.get.call_args.args[0] == "https://example.com/comic.png"
+    upload_response.json.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("download_status", "download_body"),
+    [(404, b""), (200, b"")],
+)
+def test_feishu_comic_rejects_failed_or_empty_downloads(
+    monkeypatch, download_status, download_body
+):
+    _, session, _, _ = stub_feishu_comic_http(
+        monkeypatch, download_status=download_status, download_body=download_body
+    )
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(
+                make_feishu_config(), "https://example.com/comic.png", ""
+            )
+        )
+        is False
+    )
+    assert session.post.call_count == 0
+
+
+def test_feishu_comic_rejects_oversized_local_image(monkeypatch, tmp_path):
+    factory, session, _, _ = stub_feishu_comic_http(monkeypatch)
+    comic_file = tmp_path / "comic.png"
+    comic_file.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(make_feishu_config(), str(comic_file), "")
+        )
+        is False
+    )
+    factory.assert_not_called()
+
+
+def test_feishu_comic_local_image_read_failure_does_not_request(monkeypatch, tmp_path):
+    factory, _, _, _ = stub_feishu_comic_http(monkeypatch)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(
+                make_feishu_config(), str(tmp_path / "missing.png"), ""
+            )
+        )
+        is False
+    )
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "upload_body",
+    [
+        {"code": 230001, "msg": "无 im:resource 权限"},
+        {"code": 0},
+        {"code": 0, "data": {}},
+        None,
+        [],
+    ],
+)
+def test_feishu_comic_does_not_send_message_when_upload_fails(
+    monkeypatch, tmp_path, upload_body
+):
+    comic_file = tmp_path / "comic.png"
+    comic_file.write_bytes(b"\x89PNG comic")
+    _, session, _, _ = stub_feishu_comic_http(monkeypatch, upload_body=upload_body)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(make_feishu_config(), str(comic_file), "")
+        )
+        is False
+    )
+    assert session.post.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (403, {"code": 0, "msg": "success", "data": {"message_id": "om_xxx"}}),
+        (200, {"code": 230013, "msg": "receive_id 无效"}),
+        (200, {"code": 0}),
+    ],
+)
+def test_feishu_comic_does_not_treat_rejected_send_as_success(
+    monkeypatch, tmp_path, status, body
+):
+    comic_file = tmp_path / "comic.png"
+    comic_file.write_bytes(b"\x89PNG comic")
+    _, _, _, _ = stub_feishu_comic_http(monkeypatch, status=status, body=body)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(make_feishu_config(), str(comic_file), "")
+        )
+        is False
+    )
+
+
+def test_feishu_comic_errors_do_not_log_credentials(monkeypatch, tmp_path):
+    comic_file = tmp_path / "comic.png"
+    comic_file.write_bytes(b"\x89PNG comic")
+    stub_feishu_comic_http(
+        monkeypatch, send_error=[ValueError("boom secret-value"), Mock(), Mock()]
+    )
+    log = Mock()
+    monkeypatch.setattr(feishu_bot_sender, "logger", log)
+    assert (
+        asyncio.run(
+            FeishuBotSender().send_comic(make_feishu_config(), str(comic_file), "")
+        )
+        is False
+    )
+    log.error.assert_called_once_with("[飞书机器人] 漫画推送异常：ValueError")
+    assert "secret-value" not in repr(log.mock_calls)

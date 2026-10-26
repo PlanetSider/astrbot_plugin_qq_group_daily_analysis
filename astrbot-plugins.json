@@ -6,11 +6,11 @@
   "PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider": {
     "author": "PlanetSider",
     "name": "astrbot_plugin_qq_group_daily_analysis_planetsider",
-    "version": "v5.8.3.1",
+    "version": "v5.8.3.2",
     "repo": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis",
     "download_url": "https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/archive/refs/heads/feature/serverchan-summary-routing.zip",
     "display_name": "群分析总结插件自用版",
-    "desc": "群日常分析总结插件，指定群、QQ 官方机器人和 Server酱可分别或同时投递；支持独立停止原群发送，即使没有转发通道也不发送。漫画优先发指定群，其次发 QQ 官方目标，只开 Server酱时推送文本总结。",
+    "desc": "群日常分析总结插件，指定群、QQ 官方机器人、Server酱和飞书机器人可分别或同时投递；支持独立停止原群发送，即使没有转发通道也不发送。漫画优先发指定群，其次发 QQ 官方目标，最后发飞书私聊；只开 Server酱时推送文本总结。",
     "astrbot_version": ">=4.24.1",
     "support_platforms": [
       "aiocqhttp",
