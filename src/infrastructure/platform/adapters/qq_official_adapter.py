@@ -20,6 +20,7 @@ from ....domain.value_objects.platform_capabilities import (
     QQ_OFFICIAL_CAPABILITIES,
     PlatformCapabilities,
 )
+from ....domain.value_objects.report_delivery import QQOfficialPrivateTarget
 from ....domain.value_objects.unified_group import UnifiedGroup, UnifiedMember
 from ....domain.value_objects.unified_message import (
     MessageContent,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
         QQOfficialBotProtocol,
     )
     from ....domain.value_objects.analysis_results import QQOfficialMemberProfile
-    from ....domain.value_objects.report_delivery import QQOfficialPrivateTarget
+    from ....domain.value_objects.report_delivery import PrivateReportTarget
 
 
 class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
@@ -434,20 +435,22 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
             logger.error("[QQOfficial] 频道私聊发送失败：%s", exc, exc_info=True)
             return False
 
-    async def send_private_text(
-        self, target: QQOfficialPrivateTarget, text: str
-    ) -> bool:
+    async def send_private_text(self, target: PrivateReportTarget, text: str) -> bool:
         from astrbot.api.event import MessageChain
 
+        if not isinstance(target, QQOfficialPrivateTarget):
+            return False
         return await self._send_private_chain(target, MessageChain().message(str(text)))
 
     async def send_private_text_report(
         self,
-        target: QQOfficialPrivateTarget,
+        target: PrivateReportTarget,
         content: str,
         fallback_content: str | None = None,
     ) -> bool:
         """分段发送私聊普通文本，部分失败时不重发已成功的片段。"""
+        if not isinstance(target, QQOfficialPrivateTarget):
+            return False
         report = str(fallback_content or content or "").strip()
         if not report:
             return False
@@ -457,11 +460,13 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
         return True
 
     async def send_private_image(
-        self, target: QQOfficialPrivateTarget, image: str, caption: str = ""
+        self, target: PrivateReportTarget, image: str, caption: str = ""
     ) -> bool:
         """复用 AstrBot 消息链解析并保持私聊场景。"""
         from astrbot.api.event import MessageChain
 
+        if not isinstance(target, QQOfficialPrivateTarget):
+            return False
         chain = MessageChain()
         if caption:
             chain.message(caption)
@@ -477,13 +482,13 @@ class QQOfficialAdapter(PlatformAdapter["QQOfficialBotProtocol"]):
 
     async def send_private_file(
         self,
-        target: QQOfficialPrivateTarget,
+        target: PrivateReportTarget,
         file_path: str,
         file_name: str,
         caption: str = "",
     ) -> bool:
         """通过同一私聊消息链发送附件及来源说明。"""
-        if target.scene == "guild":
+        if not isinstance(target, QQOfficialPrivateTarget) or target.scene == "guild":
             return False
         from astrbot.api.event import MessageChain
         from astrbot.core.message.components import File

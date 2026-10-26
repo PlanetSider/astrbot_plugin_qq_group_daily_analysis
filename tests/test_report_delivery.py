@@ -98,6 +98,7 @@ def test_feishu_delivery_does_not_require_platform_adapter():
     async def scenario():
         config_manager = SimpleNamespace(
             get_report_delivery_mode=Mock(return_value="feishu"),
+            get_feishu_reuse_target=Mock(return_value=None),
             get_feishu_bot_config=Mock(
                 return_value=SimpleNamespace(
                     app_id="cli_xxx",

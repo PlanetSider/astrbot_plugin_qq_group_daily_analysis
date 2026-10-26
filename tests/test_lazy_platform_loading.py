@@ -1,4 +1,4 @@
-"""Tests for on-demand lazy platform loading and Lark removal."""
+"""Tests for on-demand lazy platform loading and Lark delivery adapter."""
 
 import pytest
 from src.domain.value_objects.platform_capabilities import get_capabilities
@@ -6,10 +6,12 @@ from src.infrastructure.platform.factory import PlatformAdapterFactory
 from src.shared.constants import Platform
 
 
-def test_feishu_and_lark_are_not_supported():
-    """Verify Lark/Feishu is completely removed from platform factory and domain objects."""
-    assert not PlatformAdapterFactory.is_supported("lark")
+def test_lark_is_supported_for_delivery_but_feishu_alias_is_not():
+    """Verify Lark registers a delivery adapter while the feishu alias stays unsupported."""
+    assert PlatformAdapterFactory.is_supported("lark")
+    assert PlatformAdapterFactory.get_adapter_class("lark").__name__ == "LarkAdapter"
     assert not PlatformAdapterFactory.is_supported("feishu")
+    # Lark 仅作为投递目标，不承担群消息分析。
     assert get_capabilities("lark") is None
     assert get_capabilities("feishu") is None
     assert not hasattr(Platform, "LARK")

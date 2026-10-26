@@ -120,9 +120,29 @@ class FeishuPrivateTarget:
         return self.user_id
 
 
+@dataclass(frozen=True)
+class FeishuReuseTarget:
+    """复用 AstrBot 已接入飞书(Lark)实例的私聊会话目标。"""
+
+    user_id: str
+    platform_id: str
+
+    @property
+    def session_id(self) -> str:
+        """获取实际投递的私聊用户标识。"""
+        return self.user_id
+
+    @property
+    def umo(self) -> str:
+        """获取宿主统一会话标识（飞书私聊为 FriendMessage）。"""
+        return f"{self.platform_id}:FriendMessage:{self.user_id}"
+
+
 # 总结投递的群聊或私聊会话目标；飞书目标仅用于漫画私聊投递。
 ChatReportTarget = GroupReportTarget | QQOfficialPrivateTarget
-ReportTarget = ChatReportTarget | FeishuPrivateTarget
+# 支持私聊发送的复用会话目标联合。
+PrivateReportTarget = QQOfficialPrivateTarget | FeishuReuseTarget
+ReportTarget = ChatReportTarget | FeishuPrivateTarget | FeishuReuseTarget
 
 
 @dataclass(frozen=True)

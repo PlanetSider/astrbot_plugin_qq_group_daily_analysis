@@ -2,7 +2,7 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.8.3.2-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.8.3.3-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
@@ -258,13 +258,24 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 
 ### 使用飞书机器人接收总结
 
+飞书通道支持两种模式，开启 `feishu_enabled` 后按 `feishu_target` 是否填写自动选择，两者都填写时优先复用：
+
+**方式一：复用 AstrBot 已接入的飞书(Lark)机器人（推荐，无需凭据）**
+
+1. 在 AstrBot 管理面板接入飞书(Lark)平台（v4.16.0+，可在面板扫码一键创建）。
+2. 通过该飞书机器人在目标群聊或私聊执行 `/sid`，复制完整会话 ID，例如私聊 `lark-main:FriendMessage:ou_xxx`、群聊 `lark-main:GroupMessage:oc_xxx`。
+3. 在插件“总结投递”中开启“通过飞书机器人私聊发送”，将完整会话 ID 粘贴到“复用飞书目标会话”（`feishu_target`）。必须填写实际平台实例 ID；群聊目标不能是原群。
+4. 保存配置。插件复用 AstrBot 已认证的实例发送，无需填写 App ID、App Secret 或其他凭据。私聊发送分段普通文本总结；群聊按原输出格式发送图片、文本或 HTML。
+
+**方式二：独立凭据直连飞书开放平台**
+
 1. 在 [飞书开放平台](https://open.feishu.cn/) 创建 **企业自建应用**，在“凭证与基础信息”页复制 **App ID**（`cli_` 开头）和 **App Secret**。
 2. 在“应用能力 → 机器人”中启动机器人能力；在“权限管理”中开通获取与发送单聊、群组消息所需的权限（私聊发图还需 `im:resource` 图片上传权限），然后创建版本并发布，机器人对目标用户可见。
 3. 获取接收用户的用户标识（推荐 `open_id`，`ou_` 开头），并确认其类型；`user_id` 和 `union_id` 需在配置中选择对应类型。
 4. 在插件“总结投递”中开启“通过飞书机器人私聊发送”，填写 `feishu_app_id`、`feishu_app_secret`、`feishu_user_id`，并按实际标识选择 `feishu_user_id_type`（默认 `open_id`）。
 5. 保存配置。插件使用应用凭证换取租户访问凭证后调用飞书 `im/v1/messages` 接口发送私聊文本总结；未开启指定群和 QQ 官方时，漫画也会私聊发送。
 
-插件先请求 `auth/v3/tenant_access_token/internal` 获取访问凭证，再以 `receive_id_type` 查询参数调用 `im/v1/messages` 发送 `text` 消息（漫画先调用 `im/v1/images` 上传并以图文 `post` 消息推送）。只有接口返回 `code: 0` 且响应包含数据时才判定该通道投递成功；凭证被拒、用户 ID 与类型不匹配、机器人无权限或版本未发布都会记录失败（包含飞书返回的错误码与摘要，不含应用密钥），不会回发原群或自动重试造成重复推送。App Secret 不会写入日志。用户需在应用的可用范围内，且机器人已与该用户建立会话或允许主动消息。
+复用模式经 AstrBot 消息链发送，实例未连接、填写非飞书实例或群聊目标为原群时只记录该通道失败并继续其他已开启通道，不会回发原群。独立凭据模式先请求 `auth/v3/tenant_access_token/internal` 获取访问凭证，再以 `receive_id_type` 查询参数调用 `im/v1/messages` 发送 `text` 消息（漫画先调用 `im/v1/images` 上传并以图文 `post` 消息推送）。只有服务端明确确认时才判定该通道投递成功；凭证被拒、用户 ID 与类型不匹配、机器人无权限或版本未发布都会记录失败（包含飞书返回的错误码与摘要，不含应用密钥），不会回发原群或自动重试造成重复推送。App Secret 不会写入日志。独立凭据模式下用户需在应用的可用范围内，且机器人已与该用户建立会话或允许主动消息。
 
 群漫画适用于手动 `/群漫画` 和群分析后的自动联动漫画：停止原群开关和四个通道全部关闭时保持向原群发送；开启停止原群开关且四个通道均关闭时跳过漫画；开启指定群时只向指定群发送漫画及平台支持的相册备份；未开启指定群但开启 QQ 官方时只向 QQ 官方目标会话发送漫画；指定群和 QQ 官方都未开启但开启飞书时向飞书机器人私聊发送漫画（图片超过 10MB 或缺少 `im:resource` 权限时该次漫画投递失败并记录，不会回发原群）；只开启 Server酱时跳过漫画，不会向原群发送图片。指定群、QQ 官方与飞书同时开启时，总结分别投递，漫画仍只生成一次并按指定群、QQ 官方、飞书的优先级发送一个目标；指定群目标无效时取消漫画，不会改发其他通道或原群。漫画总开关、自动联动开关、群名单和去重仍按源群生效，话题提取及本地漫画文件也仍归属源群。排队和绘图期间修改投递配置时，任务在生成前与发送前重新校验群聊、私聊或飞书目标；切换为停止投递、仅 Server酱或无效目标会取消漫画投递，已经发出的消息无法撤回。
 

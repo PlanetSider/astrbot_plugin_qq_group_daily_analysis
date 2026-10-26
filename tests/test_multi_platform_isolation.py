@@ -167,7 +167,7 @@ async def test_auto_scheduler_multi_platform_scanning_isolation():
     # 1. Simulate AstrBot with 1 OneBot platform and 1 Lark platform
     onebot_client = MagicMock()
     onebot_client.call_action = AsyncMock()
-    lark_client = MagicMock()  # Unsupported client without adapter support
+    lark_client = MagicMock()  # Delivery-only client; LarkAdapter never fetches history
 
     onebot_platform = FakePlatform("onebot_main", "aiocqhttp", onebot_client)
     lark_platform = FakePlatform("lark_main", "lark", lark_client)
@@ -182,9 +182,9 @@ async def test_auto_scheduler_multi_platform_scanning_isolation():
     bot_mgr.set_context(fake_context)
     await bot_mgr.auto_discover_bot_instances()
 
-    # Verify adapter creation status
+    # Verify adapter creation status: Lark registers a delivery-only adapter.
     assert "onebot_main" in bot_mgr._adapters
-    assert "lark_main" not in bot_mgr._adapters
+    assert "lark_main" in bot_mgr._adapters
 
     # Mock OneBotAdapter get_group_list
     onebot_adapter = bot_mgr.get_adapter("onebot_main")

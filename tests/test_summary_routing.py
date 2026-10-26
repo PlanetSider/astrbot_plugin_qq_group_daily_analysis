@@ -10,6 +10,7 @@ import pytest
 from src.application.handlers.analysis_command_handler import AnalysisCommandHandler
 from src.domain.value_objects.report_delivery import (
     FeishuBotConfig,
+    FeishuReuseTarget,
     GroupReportTarget,
     ServerChanBotConfig,
 )
@@ -948,6 +949,130 @@ def test_qq_official_switch_resolves_delivery_combinations(
 def test_all_delivery_switches_require_boolean_values():
     with pytest.raises(ValueError, match="开关必须是布尔值"):
         make_config({"feishu_enabled": "true"}).get_report_delivery_mode()
+
+
+# ================================================================
+# 飞书复用模式：会话解析、实例校验与投递路径
+# ================================================================
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (
+            "lark-main:FriendMessage:ou_abc",
+            FeishuReuseTarget("ou_abc", "lark-main"),
+        ),
+        (
+            " lark-main:GroupMessage:oc_xyz ",
+            GroupReportTarget("oc_xyz", "lark-main"),
+        ),
+    ],
+)
+def test_feishu_reuse_target_parses_session_id(target, expected):
+    assert make_config({"feishu_target": target}).get_feishu_reuse_target() == expected
+
+
+def test_feishu_reuse_target_empty_returns_none():
+    assert make_config({}).get_feishu_reuse_target() is None
+    assert make_config({"feishu_target": "  "}).get_feishu_reuse_target() is None
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "lark-main:FriendMessage:ou_abc:extra",
+        "lark-main:GroupMessage",
+        "lark-main:PrivateMessage:ou_abc",
+        ":FriendMessage:ou_abc",
+        "lark-main:FriendMessage:",
+        "lark-main:FriendMessage:oc_x:y",
+    ],
+)
+def test_invalid_feishu_reuse_target_is_rejected(target):
+    with pytest.raises(ValueError, match="飞书目标必须是完整会话 ID"):
+        make_config({"feishu_target": target}).get_feishu_reuse_target()
+
+
+def test_feishu_reuse_mode_takes_priority_over_direct_credentials(tmp_path):
+    dispatcher, source, target = make_dispatcher(tmp_path)
+    dispatcher.config_manager.config["report_delivery"].update(
+        destination="independent",
+        feishu_enabled=True,
+        feishu_target="lark-main:FriendMessage:ou_abc",
+    )
+    dispatcher.feishu_sender.send_summary = AsyncMock()
+    bot_manager = Mock()
+    bot_manager.validate_lark_report_target.side_effect = lambda t, g, p: t
+    bot_manager.get_adapter.return_value = SimpleNamespace(
+        send_private_text_report=AsyncMock(return_value=True)
+    )
+    dispatcher.message_sender.bot_manager = bot_manager
+
+    assert (
+        asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
+    )
+    dispatcher.feishu_sender.send_summary.assert_not_awaited()
+    bot_manager.get_adapter.assert_any_call("lark-main")
+    adapter = bot_manager.get_adapter.return_value
+    adapter.send_private_text_report.assert_awaited_once()
+    reuse_target, content = adapter.send_private_text_report.await_args.args
+    assert reuse_target.user_id == "ou_abc"
+    assert content.startswith("📊 每日群聊分析报告\n来源群：source-group\n\n")
+
+
+def test_feishu_reuse_invalid_instance_does_not_undo_other_channels(tmp_path):
+    dispatcher, source, target = make_dispatcher(tmp_path)
+    dispatcher.config_manager.config["report_delivery"].update(
+        destination="independent",
+        forward_group_enabled=True,
+        feishu_enabled=True,
+        feishu_target="lark-main:FriendMessage:ou_abc",
+    )
+    target.send_text_report.return_value = True
+    dispatcher.feishu_sender.send_summary = AsyncMock(return_value=True)
+    bot_manager = Mock()
+    bot_manager.validate_lark_report_target.side_effect = ValueError(
+        "飞书目标平台未连接"
+    )
+    bot_manager.get_adapter = Mock(
+        side_effect=lambda platform_id: {"target-platform": target}.get(platform_id)
+    )
+    bot_manager.get_adapter_platform_id = Mock(
+        side_effect=lambda adapter: getattr(adapter, "platform_id", "")
+    )
+    dispatcher.message_sender.bot_manager = bot_manager
+
+    assert (
+        asyncio.run(dispatcher.dispatch("source-group", {}, "source-platform")) is True
+    )
+    target.send_text_report.assert_awaited_once()
+    dispatcher.feishu_sender.send_summary.assert_not_awaited()
+
+
+def test_lark_adapter_sends_documented_session_messages(tmp_path):
+    from src.infrastructure.platform.adapters.lark_adapter import LarkAdapter
+
+    adapter = LarkAdapter(object(), {"platform_id": "lark-main"})
+    context = SimpleNamespace(send_message=AsyncMock(return_value=True))
+    adapter.set_context(context)
+
+    assert asyncio.run(adapter.send_text("oc_xyz", "群总结")) is True
+    assert asyncio.run(
+        adapter.send_private_text(FeishuReuseTarget("ou_abc", "lark-main"), "私聊")
+    ) is True
+    sent_umos = [call.args[0] for call in context.send_message.await_args_list]
+    assert sent_umos == ["lark-main:GroupMessage:oc_xyz", "lark-main:FriendMessage:ou_abc"]
+    assert context.send_message.await_args_list[0].args[1] is not None
+
+
+def test_lark_adapter_requires_context():
+    from src.infrastructure.platform.adapters.lark_adapter import LarkAdapter
+
+    adapter = LarkAdapter(object(), {"platform_id": "lark-main"})
+    assert (
+        asyncio.run(adapter.send_text("oc_xyz", "群总结")) is False
+    )
 
 
 def test_invalid_feishu_config_does_not_undo_successful_group_delivery(

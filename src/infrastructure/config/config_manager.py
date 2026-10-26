@@ -17,6 +17,7 @@ from astrbot.api.star import StarTools
 from ...domain.value_objects.report_delivery import (
     ChatReportTarget,
     FeishuBotConfig,
+    FeishuReuseTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
     ReportDeliveryMode,
@@ -470,6 +471,34 @@ class ConfigManager:
         if not isinstance(silent, bool):
             raise ValueError("Server酱静默推送必须是布尔值")
         return ServerChanBotConfig(token=token.strip(), chat_id=chat_id, silent=silent)
+
+    def get_feishu_reuse_target(self) -> GroupReportTarget | FeishuReuseTarget | None:
+        """解析复用 AstrBot 飞书实例的目标会话，未填写时返回 None。
+
+        Returns:
+            群聊目标或飞书私聊目标；feishu_target 为空时返回 None，改用独立凭据模式。
+
+        Raises:
+            ValueError: 会话 ID 格式无效。
+        """
+        raw_target: object = self._get_group("report_delivery").get("feishu_target", "")
+        if not isinstance(raw_target, str) or not raw_target.strip():
+            return None
+        parts = [part.strip() for part in raw_target.strip().split(":", 2)]
+        if (
+            len(parts) != 3
+            or parts[1] not in {"GroupMessage", "FriendMessage"}
+            or not parts[0]
+            or not parts[2]
+            or (parts[1] == "FriendMessage" and ":" in parts[2])
+        ):
+            raise ValueError(
+                "飞书目标必须是完整会话 ID：平台实例ID:GroupMessage:chat_id 或 "
+                "平台实例ID:FriendMessage:open_id"
+            )
+        if parts[1] == "GroupMessage":
+            return GroupReportTarget(group_id=parts[2], platform_id=parts[0])
+        return FeishuReuseTarget(user_id=parts[2], platform_id=parts[0])
 
     def get_feishu_bot_config(self) -> FeishuBotConfig:
         """读取飞书自建应用凭证与接收用户标识。

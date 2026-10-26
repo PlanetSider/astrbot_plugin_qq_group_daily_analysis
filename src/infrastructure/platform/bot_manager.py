@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, TypeGuard
 
 from ...domain.value_objects.report_delivery import (
     ChatReportTarget,
+    FeishuReuseTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
 )
@@ -453,6 +454,51 @@ class BotManager:
                 or (source_id and source_id.casefold() == actual_id.casefold())
             ):
                 raise ValueError("QQ 官方投递目标不能是原群，请填写另外一个群")
+        return GroupReportTarget(group_id=target.group_id, platform_id=actual_id)
+
+    def validate_lark_report_target(
+        self,
+        target: GroupReportTarget | FeishuReuseTarget,
+        source_group_id: str,
+        source_platform_id: str | None,
+    ) -> GroupReportTarget | FeishuReuseTarget:
+        """校验飞书复用目标使用的是已接入的飞书(Lark)实例。
+
+        Args:
+            target: 已解析的群聊或私聊目标。
+            source_group_id: 被分析的源群 ID。
+            source_platform_id: 源群所属平台实例 ID。
+
+        Returns:
+            使用真实飞书实例 ID 的目标。
+
+        Raises:
+            ValueError: 实例不可用、不是飞书、仅填写协议别名或群聊目标是原群。
+        """
+        requested_id = (target.platform_id or "").strip()
+        adapter = self.get_adapter(requested_id)
+        if adapter is None:
+            raise ValueError("飞书目标平台未连接，请检查目标 /sid 中的平台实例 ID")
+        if adapter.get_platform_name() != "lark":
+            raise ValueError("飞书复用目标必须使用 AstrBot 已接入的飞书(Lark)机器人")
+        actual_id = self.get_adapter_platform_id(adapter).strip()
+        if not requested_id or actual_id.casefold() != requested_id.casefold():
+            raise ValueError("飞书目标必须填写实际平台实例 ID，不能仅填写协议类型")
+        if isinstance(target, FeishuReuseTarget):
+            return FeishuReuseTarget(user_id=target.user_id, platform_id=actual_id)
+        if target.group_id == source_group_id:
+            source_adapter = self.get_adapter(source_platform_id)
+            source_id = (
+                self.get_adapter_platform_id(source_adapter).strip()
+                if source_adapter is not None
+                else ""
+            )
+            if (
+                (source_platform_id or "").strip().casefold() == actual_id.casefold()
+                or source_adapter is adapter
+                or (source_id and source_id.casefold() == actual_id.casefold())
+            ):
+                raise ValueError("飞书投递目标不能是原群，请填写另外一个群")
         return GroupReportTarget(group_id=target.group_id, platform_id=actual_id)
 
     def get_all_adapters(self) -> dict[str, PlatformAdapter]:

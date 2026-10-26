@@ -17,6 +17,7 @@ from ...domain.value_objects.report_delivery import (
     QQ_OFFICIAL_DELIVERY_MODES,
     SERVERCHAN_DELIVERY_MODES,
     ChatReportTarget,
+    FeishuReuseTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
 )
@@ -251,7 +252,10 @@ class ReportDispatcher:
         if feishu_enabled:
             try:
                 channel_results["feishu"] = await self._dispatch_feishu(
-                    group_id, analysis_result, source_label=source_label
+                    group_id,
+                    analysis_result,
+                    platform_id,
+                    source_label=source_label,
                 )
             except Exception as exc:
                 # 应用密钥在请求体中出现，禁止输出异常正文及堆栈。
@@ -307,10 +311,20 @@ class ReportDispatcher:
         self,
         group_id: str,
         analysis_result: AnalysisResultPayload,
+        platform_id: str | None = None,
         *,
         source_label: str = "",
     ) -> bool:
-        """独立生成并通过飞书机器人私聊推送含来源标识的文本总结。"""
+        """按配置投递飞书总结：优先复用宿主飞书实例，否则独立凭据直连。"""
+        reuse_target = self.config_manager.get_feishu_reuse_target()
+        if reuse_target is not None:
+            return await self._dispatch_feishu_reuse(
+                group_id,
+                analysis_result,
+                platform_id,
+                reuse_target,
+                source_label=source_label,
+            )
         bot_config = self.config_manager.get_feishu_bot_config()
         if not self.report_generator:
             logger.error("[分发器] 报告生成器未初始化，无法推送飞书总结")
@@ -333,6 +347,60 @@ class ReportDispatcher:
         ) as dispatch_span:
             sent = await self.feishu_sender.send_summary(
                 bot_config,
+                f"📊 每日群聊分析报告\n{source_label or f'来源群：{group_id}'}\n\n{text}",
+            )
+            if dispatch_span:
+                dispatch_span.setdefault("payload", {})["success"] = sent
+            return sent
+
+    async def _dispatch_feishu_reuse(
+        self,
+        group_id: str,
+        analysis_result: AnalysisResultPayload,
+        source_platform_id: str | None,
+        reuse_target: GroupReportTarget | FeishuReuseTarget,
+        *,
+        source_label: str = "",
+    ) -> bool:
+        """通过宿主飞书(Lark)实例投递总结，群聊走完整格式路径，私聊发送分段文本。"""
+        bot_manager = self.message_sender.bot_manager
+        reuse_target = bot_manager.validate_lark_report_target(
+            reuse_target, group_id, source_platform_id
+        )
+        if isinstance(reuse_target, GroupReportTarget):
+            return await self._dispatch_group_reports(
+                group_id,
+                analysis_result,
+                reuse_target.platform_id,
+                reuse_target,
+                self.config_manager.get_output_format(),
+                source_label=source_label,
+            )
+        adapter = bot_manager.get_adapter(reuse_target.platform_id)
+        if adapter is None:
+            logger.error(f"[分发器] 飞书目标平台不可用：{reuse_target.platform_id}")
+            return False
+        if not self.report_generator:
+            logger.error("[分发器] 报告生成器未初始化，无法推送飞书总结")
+            return False
+        text = self.report_generator.generate_text_report(analysis_result)
+        trace = TraceContext.current()
+        with (
+            trace.span(
+                AnalysisStage.DISPATCH_REPORT,
+                {
+                    "platform": "feishu",
+                    "group_id": group_id,
+                    "target_user_id": reuse_target.user_id,
+                    "formats": ["text"],
+                    "format": "text",
+                },
+            )
+            if trace
+            else nullcontext()
+        ) as dispatch_span:
+            sent = await adapter.send_private_text_report(
+                reuse_target,
                 f"📊 每日群聊分析报告\n{source_label or f'来源群：{group_id}'}\n\n{text}",
             )
             if dispatch_span:

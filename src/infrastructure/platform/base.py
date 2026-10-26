@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from astrbot.api.star import Context
 
     from ...domain.value_objects.platform_capabilities import PlatformCapabilities
-    from ...domain.value_objects.report_delivery import QQOfficialPrivateTarget
+    from ...domain.value_objects.report_delivery import PrivateReportTarget
     from ...domain.value_objects.unified_message import UnifiedMessage
 
 
@@ -294,15 +294,13 @@ class PlatformAdapter(
             # 兜底：直接发送
             return await self.send_text(group_id, str(fallback_content or content))
 
-    async def send_private_text(
-        self, target: QQOfficialPrivateTarget, text: str
-    ) -> bool:
+    async def send_private_text(self, target: PrivateReportTarget, text: str) -> bool:
         """发送私聊文本；不支持私聊的平台安全返回失败。"""
         return False
 
     async def send_private_text_report(
         self,
-        target: QQOfficialPrivateTarget,
+        target: PrivateReportTarget,
         content: str,
         fallback_content: str | None = None,
     ) -> bool:
@@ -310,14 +308,14 @@ class PlatformAdapter(
         return False
 
     async def send_private_image(
-        self, target: QQOfficialPrivateTarget, image: str, caption: str = ""
+        self, target: PrivateReportTarget, image: str, caption: str = ""
     ) -> bool:
         """向私聊发送图片，不使用群消息回退。"""
         return False
 
     async def send_private_file(
         self,
-        target: QQOfficialPrivateTarget,
+        target: PrivateReportTarget,
         file_path: str,
         file_name: str,
         caption: str = "",

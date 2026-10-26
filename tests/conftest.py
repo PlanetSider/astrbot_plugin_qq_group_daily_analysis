@@ -146,6 +146,30 @@ if "astrbot.api" not in sys.modules:
     astrbot_event_module.AstrMessageEvent = AstrMessageEvent
     astrbot_event_module.MessageEventResult = MessageEventResult
     astrbot_event_module.filter = filter
+
+    class MessageChain(list):
+        """最小消息链桩：链式追加组件，与宿主消息链 API 保持一致。"""
+
+        def __init__(self, chain=None):
+            super().__init__(chain or [])
+
+        def message(self, text):
+            self.append(Plain(text))
+            return self
+
+        def base64_image(self, data):
+            self.append(Image.fromFileSystem(f"base64://{data}"))
+            return self
+
+        def url_image(self, url):
+            self.append(Image.fromURL(url))
+            return self
+
+        def file_image(self, path):
+            self.append(Image.fromFileSystem(path))
+            return self
+
+    astrbot_event_module.MessageChain = MessageChain
     astrbot_provider_module.LLMResponse = LLMResponse
     astrbot_star_module.Context = Context
     astrbot_star_module.Star = Star

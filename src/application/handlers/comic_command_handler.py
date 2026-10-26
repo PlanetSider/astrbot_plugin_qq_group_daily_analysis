@@ -16,6 +16,7 @@ from ...domain.value_objects.report_delivery import (
     FORWARD_GROUP_DELIVERY_MODES,
     QQ_OFFICIAL_DELIVERY_MODES,
     FeishuPrivateTarget,
+    FeishuReuseTarget,
     GroupReportTarget,
     QQOfficialPrivateTarget,
     ReportTarget,
@@ -373,6 +374,11 @@ class ComicCommandHandler:
                     platform_id,
                 )
             if mode in FEISHU_COMIC_DELIVERY_MODES:
+                reuse_target = self.config_manager.get_feishu_reuse_target()
+                if reuse_target is not None:
+                    return self.bot_manager.validate_lark_report_target(
+                        reuse_target, group_id, platform_id
+                    )
                 bot_config = self.config_manager.get_feishu_bot_config()
                 return FeishuPrivateTarget(
                     user_id=bot_config.user_id,
@@ -455,6 +461,9 @@ class ComicCommandHandler:
                 if isinstance(delivery_target, QQOfficialPrivateTarget):
                     trace.metadata["comic_target_user_id"] = delivery_target.user_id
                     trace.metadata["comic_target_scene"] = delivery_target.scene
+                elif isinstance(delivery_target, FeishuReuseTarget):
+                    trace.metadata["comic_target_user_id"] = delivery_target.user_id
+                    trace.metadata["comic_target_scene"] = "lark_private"
                 else:
                     trace.metadata["comic_target_group_id"] = delivery_target.group_id
                     trace.metadata["comic_target_scene"] = "group"
@@ -614,10 +623,16 @@ class ComicCommandHandler:
                         cur_trace.metadata["comic_target_platform"] = (
                             target.platform_id or ""
                         )
-                        if isinstance(target, QQOfficialPrivateTarget):
+                        if isinstance(
+                            target, (QQOfficialPrivateTarget, FeishuReuseTarget)
+                        ):
                             cur_trace.metadata.pop("comic_target_group_id", None)
                             cur_trace.metadata["comic_target_user_id"] = target.user_id
-                            cur_trace.metadata["comic_target_scene"] = target.scene
+                            cur_trace.metadata["comic_target_scene"] = (
+                                target.scene
+                                if isinstance(target, QQOfficialPrivateTarget)
+                                else "lark_private"
+                            )
                         else:
                             cur_trace.metadata.pop("comic_target_user_id", None)
                             cur_trace.metadata["comic_target_group_id"] = (
@@ -631,7 +646,8 @@ class ComicCommandHandler:
                     else ""
                 )
                 if isinstance(
-                    target, (QQOfficialPrivateTarget, FeishuPrivateTarget)
+                    target,
+                    (QQOfficialPrivateTarget, FeishuPrivateTarget, FeishuReuseTarget),
                 ) or (target.group_id != group_id or target.platform_id != platform_id):
                     group_name = (
                         cur_trace.group_name
@@ -678,7 +694,7 @@ class ComicCommandHandler:
                             f"漫画目标平台不可用，取消发送：{target.platform_id or 'default'}"
                         )
                         return
-                    if isinstance(target, QQOfficialPrivateTarget):
+                    if isinstance(target, (QQOfficialPrivateTarget, FeishuReuseTarget)):
                         sent = await adapter.send_private_image(
                             target, image_url, caption=caption
                         )
@@ -694,7 +710,14 @@ class ComicCommandHandler:
                     )
                     return
                 if (
-                    isinstance(target, (QQOfficialPrivateTarget, FeishuPrivateTarget))
+                    isinstance(
+                        target,
+                        (
+                            QQOfficialPrivateTarget,
+                            FeishuPrivateTarget,
+                            FeishuReuseTarget,
+                        ),
+                    )
                     or not comic_bytes
                 ):
                     return

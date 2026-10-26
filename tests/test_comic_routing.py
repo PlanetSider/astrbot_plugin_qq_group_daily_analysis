@@ -1033,6 +1033,7 @@ def feishu_comic_rig(comic_rig):
     rig.handler.feishu_sender = SimpleNamespace(send_comic=AsyncMock(return_value=True))
     bot_manager = rig.handler.bot_manager
     bot_manager.validate_qq_official_report_target = lambda target, _g, _p: target
+    bot_manager.validate_lark_report_target = lambda target, _g, _p: target
     return rig
 
 
@@ -1153,3 +1154,96 @@ async def test_feishu_comic_target_resolves_as_private_target(feishu_comic_rig):
     assert rig.handler._resolve_delivery_target(SOURCE_GROUP, SOURCE_PLATFORM) == (
         FeishuPrivateTarget("ou_abc", "union_id")
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "winner"),
+    [
+        ("lark-main:FriendMessage:ou_abc", "private"),
+        ("lark-main:GroupMessage:oc_xyz", "group"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_feishu_reuse_mode_routes_comic_via_host_instance(
+    feishu_comic_rig, target, winner
+):
+    rig = feishu_comic_rig
+    rig.settings["feishu_target"] = target
+    lark_adapter = SimpleNamespace(
+        platform_id="lark-main",
+        send_image=AsyncMock(return_value=True),
+        send_private_image=AsyncMock(return_value=True),
+    )
+    rig.adapters["lark-main"] = lark_adapter
+    bot_manager = rig.handler.bot_manager
+    bot_manager.get_adapter = Mock(
+        side_effect=lambda platform_id: rig.adapters.get(platform_id)
+    )
+
+    await generate(rig)
+
+    rig.handler.feishu_sender.send_comic.assert_not_awaited()
+    if winner == "private":
+        lark_adapter.send_private_image.assert_awaited_once()
+        assert lark_adapter.send_private_image.await_args.args[0].user_id == "ou_abc"
+        assert lark_adapter.send_private_image.await_args.kwargs[
+            "caption"
+        ].startswith(f"来源群：{SOURCE_GROUP}")
+        lark_adapter.send_image.assert_not_awaited()
+    else:
+        lark_adapter.send_image.assert_awaited_once()
+        assert lark_adapter.send_image.await_args.args[0] == "oc_xyz"
+        lark_adapter.send_private_image.assert_not_awaited()
+    rig.source.send_image.assert_not_awaited()
+    rig.target.send_image.assert_not_awaited()
+    rig.source.upload_group_album.assert_not_awaited()
+    rig.target.upload_group_album.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_feishu_reuse_invalid_instance_cancels_comic(feishu_comic_rig):
+    rig = feishu_comic_rig
+    rig.settings["feishu_target"] = "lark-main:FriendMessage:ou_abc"
+
+    def fail_validation(_target, _group_id, _platform_id):
+        raise ValueError("飞书目标平台未连接，请检查目标 /sid 中的平台实例 ID")
+
+    rig.handler.bot_manager.validate_lark_report_target = fail_validation
+
+    assert (
+        rig.handler.try_trigger_comic_generation(
+            SOURCE_GROUP, SOURCE_PLATFORM, {"topics": TOPICS}
+        )
+        == "delivery_unavailable"
+    )
+    rig.comic_service.generate_comic.assert_not_awaited()
+    rig.handler.feishu_sender.send_comic.assert_not_awaited()
+    assert not rig.handler._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_feishu_reuse_target_changes_are_rechecked_after_drawing(
+    feishu_comic_rig,
+):
+    rig = feishu_comic_rig
+    lark_adapter = SimpleNamespace(
+        platform_id="lark-main",
+        send_image=AsyncMock(return_value=True),
+        send_private_image=AsyncMock(return_value=True),
+    )
+    rig.adapters["lark-main"] = lark_adapter
+    bot_manager = rig.handler.bot_manager
+    bot_manager.get_adapter = Mock(
+        side_effect=lambda platform_id: rig.adapters.get(platform_id)
+    )
+    rig.settings["feishu_target"] = "lark-main:FriendMessage:old-user"
+
+    async def draw(*_args):
+        rig.settings["feishu_target"] = "lark-main:FriendMessage:new-user"
+        return PNG_BYTES, None
+
+    rig.comic_service.generate_comic.side_effect = draw
+    await generate(rig)
+
+    sent_target = lark_adapter.send_private_image.await_args.args[0]
+    assert sent_target.user_id == "new-user"
