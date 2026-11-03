@@ -75,6 +75,11 @@ class StubConfig:
     def is_group_allowed(self, target: str) -> bool:
         return True
 
+    def get_report_delivery_mode(self) -> str:
+        """返回投递模式；测试统一按发送原群处理，等价上游默认行为。"""
+
+        return "source_group"
+
     def get_enable_analysis_reply(self) -> bool:
         return True
 

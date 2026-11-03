@@ -283,6 +283,26 @@ def trigger_service(
     )
 
 
+async def _wait_async_analysis_done(
+    trigger_service: AnalysisTriggerService, group_id: str = "123456"
+) -> None:
+    """有界轮询等待后台分析协程收尾。
+
+    后台协程先经线程池完成 trace 落库与 finish，才会在 finally 中释放群排他锁；
+    全量测试负载下该过程可能超过固定 sleep 的时长，因此以锁释放作为完成信号，
+    避免时序抖动导致的偶发失败。
+
+    Args:
+        trigger_service: 待观测的分析触发服务实例。
+        group_id: 期望已释放排他锁的目标群号。
+    """
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while group_id in trigger_service._pending_groups and loop.time() < deadline:
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
 async def test_trigger_permission_denied(trigger_service):
     event = MagicMock()
@@ -338,7 +358,7 @@ async def test_trigger_success_async_fire_and_forget_with_render(
     assert "跳过模块: 聊天质量分析" in msg
 
     # 等待后台任务执行
-    await asyncio.sleep(0.05)
+    await _wait_async_analysis_done(trigger_service)
     mock_analysis_service.execute_daily_analysis.assert_called_once()
     call_kwargs = mock_analysis_service.execute_daily_analysis.call_args.kwargs
     assert call_kwargs["group_id"] == "123456"
@@ -381,7 +401,7 @@ async def test_trigger_silent_mode_no_dispatch(
     assert "[分析任务已成功在后台启动]" in msg
     assert "**不会**向群聊发送长图" in msg
 
-    await asyncio.sleep(0.05)
+    await _wait_async_analysis_done(trigger_service)
     mock_analysis_service.execute_daily_analysis.assert_called_once()
     # 验证静默模式下未调用 report_dispatcher
     mock_report_dispatcher.dispatch.assert_not_called()
@@ -662,7 +682,7 @@ async def test_trigger_dispatch_failure_resilience(
     )
     assert "[分析任务已成功在后台启动]" in msg
     # 等待后台任务执行完成
-    await asyncio.sleep(0.05)
+    await _wait_async_analysis_done(trigger_service)
     # 验证群排他锁已正常释放
     assert "123456" not in trigger_service._pending_groups
 

@@ -16,7 +16,11 @@ async def test_comic_delivery_preserves_fallback_and_album_gate(tmp_path, monkey
     adapter = SimpleNamespace(send_image=AsyncMock(return_value=mode == "success"))
     output = (None, "https://example.com/comic.png") if mode == "fallback" else (b"comic", None)
     handler = ComicCommandHandler(
-        SimpleNamespace(get_t2i_max_concurrent=lambda: 1, get_show_report_caption=lambda: False),
+        SimpleNamespace(
+            get_t2i_max_concurrent=lambda: 1,
+            get_show_report_caption=lambda: False,
+            get_report_delivery_mode=lambda: "source_group",
+        ),
         SimpleNamespace(get_adapter=Mock(return_value=adapter)),
         SimpleNamespace(generate_comic=AsyncMock(return_value=output)),
         None,
