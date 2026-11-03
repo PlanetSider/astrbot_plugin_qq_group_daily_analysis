@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfoNotFoundError
 
+from src.domain.value_objects import TokenUsage
 from src.infrastructure.reporting.generators import ReportGenerator
 from src.infrastructure.reporting.templates import HTMLTemplates
 
@@ -169,13 +170,13 @@ def load_main_method(name: str):
 
 
 def load_comic_service_method(name: str):
-    """从漫画服务加载单个方法，避免测试依赖 AstrBot 运行时。
+    """读取真实漫画服务方法，保留其辅助方法和异常类型依赖。
 
     Args:
-        name: 目标异步方法名称。
+        name: 目标方法名称。
 
     Returns:
-        可直接绑定到测试替身对象的方法。
+        可绑定到测试服务实例的方法。
     """
     service_path = (
         Path(__file__).parents[1]
@@ -256,6 +257,8 @@ def load_config_manager_class(plugin_data_dir: Path):
         if isinstance(node, ast.ClassDef) and node.name == "ConfigManager"
     )
     required_names = {
+        "refresh_rendering_schema_options",
+        "save_config",
         "__init__",
         "_get_group",
         "_get_plugin_root",
@@ -318,7 +321,10 @@ def load_config_manager_class(plugin_data_dir: Path):
         decorator_list=[],
     )
     isolated_module = ast.fix_missing_locations(
-        ast.Module(body=[isolated_class], type_ignores=[])
+        ast.Module(
+            body=[ast.parse("from __future__ import annotations").body[0], isolated_class],
+            type_ignores=[],
+        )
     )
     namespace = {
         "__name__": "src.infrastructure.config.config_manager",
@@ -338,6 +344,9 @@ def load_config_manager_class(plugin_data_dir: Path):
         "re": re,
         "shutil": shutil,
         "logger": Mock(),
+        "sync_rendering_schema_options": __import__(
+            "src.infrastructure.config.rendering_schema", fromlist=["sync_rendering_schema_options"]
+        ).sync_rendering_schema_options,
         "ConfigMigrator": __import__(
             "src.infrastructure.config.config_migrator",
             fromlist=["ConfigMigrator"],
@@ -381,8 +390,11 @@ def test_qq_official_webhook_uses_official_report_capabilities():
 
     async def scenario():
         adapter = SimpleNamespace(
-            get_platform_name=Mock(return_value="qq_official_webhook")
+            get_platform_name=Mock(return_value="qq_official_webhook"),
+            platform_id="qq-official-main",
+            send_text_report=AsyncMock(),
         )
+        markdown = AsyncMock(return_value=("正文", "回退正文"))
         mock_comic_trigger = Mock()
         plugin = SimpleNamespace(
             _terminating=False,
@@ -390,7 +402,7 @@ def test_qq_official_webhook_uses_official_report_capabilities():
                 get_output_format=Mock(return_value=["text"]),
                 get_report_delivery_mode=Mock(return_value="source_group"),
             ),
-            _send_text_reports=AsyncMock(return_value=True),
+            report_generator=SimpleNamespace(generate_markdown_report=markdown),
             comic_command_handler=SimpleNamespace(
                 try_trigger_comic_generation=mock_comic_trigger
             ),
@@ -405,7 +417,11 @@ def test_qq_official_webhook_uses_official_report_capabilities():
         async for _ in send_analysis_report(plugin, SimpleNamespace(), result):
             pass
 
-        assert plugin._send_text_reports.await_args.args[2] is True
+        markdown.assert_awaited_once()
+        assert markdown.await_args.kwargs["mention_style"] == "qq"
+        adapter.send_text_report.assert_awaited_once_with(
+            "123456", "正文", fallback_content="回退正文",
+        )
         mock_comic_trigger.assert_called_once_with("123456", "qq-official-main", {})
 
     asyncio.run(scenario())
@@ -413,17 +429,16 @@ def test_qq_official_webhook_uses_official_report_capabilities():
 
 def test_uploaded_reference_image_is_loaded_from_plugin_data_dir(tmp_path: Path):
     """已选参考图只允许从插件数据目录读取。"""
-    fetch_reference_image = load_comic_service_method("_fetch_reference_image")
+    from src.application.services.comic_application_service import ComicApplicationService
+
     image_path = tmp_path / "files" / "daily_comic" / "drawing_reference_image"
     image_path.mkdir(parents=True)
     (image_path / "reference.png").write_bytes(b"\x89PNG\r\n\x1a\nimage")
-    service = SimpleNamespace(
-        plugin_data_dir=tmp_path,
-    )
+    service = object.__new__(ComicApplicationService)
+    service.plugin_data_dir = tmp_path
 
     result = asyncio.run(
-        fetch_reference_image(
-            service,
+        service._fetch_reference_image(
             "files/daily_comic/drawing_reference_image/reference.png",
         )
     )
@@ -445,7 +460,7 @@ def test_reference_image_migrates_old_config_and_uses_last_selected_file(
     )
     config_manager = config_manager_class(config)
 
-    assert config["daily_comic"]["drawing_reference_image"] == []
+    assert "drawing_reference_image" not in config["daily_comic"]
     config.save_config.assert_called_once()
     assert list((tmp_path / "config_backups").glob("*.json"))
 
@@ -463,7 +478,7 @@ def test_reference_image_migrates_old_config_and_uses_last_selected_file(
     character = config["daily_comic"]["comic_characters"][0]
     assert character["name"] == "默认角色方案"
     assert character["reference_images"][-1].endswith("selected.webp")
-    assert config["daily_comic"]["drawing_reference_image"] == []
+    assert "drawing_reference_image" not in config["daily_comic"]
     assert (tmp_path / character["reference_images"][-1]).read_bytes() == b"selected"
     assert config_manager.get_drawing_reference_image().endswith("selected.webp")
 
@@ -512,7 +527,7 @@ def test_comic_generation_passes_character_storyboard_prompt():
     topics = [{"topic": "话题", "detail": "详情"}]
     character = {"name": "角色甲", "storyboard_prompt": "角色模板"}
     llm_analyzer = SimpleNamespace(
-        analyze_comic_storyboards=AsyncMock(return_value=([], object()))
+        analyze_comic_storyboards=AsyncMock(return_value=([], TokenUsage()))
     )
     config_manager = SimpleNamespace(
         get_enable_daily_comic=Mock(return_value=True),
@@ -520,10 +535,11 @@ def test_comic_generation_passes_character_storyboard_prompt():
         get_comic_character_persona_id=Mock(return_value="persona-a"),
         get_comic_character_storyboard_prompt=Mock(return_value="角色模板"),
     )
-    service = SimpleNamespace(
-        config_manager=config_manager,
-        llm_analyzer=llm_analyzer,
-    )
+    from src.application.services.comic_application_service import ComicApplicationService
+
+    service = object.__new__(ComicApplicationService)
+    service.config_manager = config_manager
+    service.llm_analyzer = llm_analyzer
 
     asyncio.run(generate_comic(service, topics, "123456", "umo"))
 
@@ -724,9 +740,11 @@ def test_upgrade_config_backups_keep_only_twenty_newest(tmp_path: Path):
     assert not (backup_dir / "plugin_config_v1.0.0_20260812_000000.json").exists()
 
 
-def test_t2i_rendering_strategies_explicitly_set_desktop_viewport(tmp_path: Path):
+def test_t2i_rendering_strategies_explicitly_set_desktop_viewport():
     """图片报告应显式传入视口，避免依赖 T2I 服务的默认尺寸。"""
-    config_manager_class = load_config_manager_class(tmp_path)
+    from src.infrastructure.config.config_manager import ConfigManager
+
+    config_manager_class = ConfigManager
     config_manager = object.__new__(config_manager_class)
     config_manager.config = {
         "t2i_rendering": {
@@ -1115,7 +1133,7 @@ def _comic_service(config_manager, drawing_client, **methods):
         "config_manager": config_manager,
         "llm_analyzer": SimpleNamespace(
             analyze_comic_storyboards=AsyncMock(
-                return_value=([{"scene": "comic scene prompt"}], None)
+                return_value=([{"scene": "comic scene prompt"}], TokenUsage())
             )
         ),
         "drawing_client": drawing_client,
@@ -1124,7 +1142,11 @@ def _comic_service(config_manager, drawing_client, **methods):
         "_generate_via_general_plugin": AsyncMock(return_value=None),
     }
     service.update(methods)
-    return SimpleNamespace(**service)
+    from src.application.services.comic_application_service import ComicApplicationService
+
+    instance = object.__new__(ComicApplicationService)
+    instance.__dict__.update(service)
+    return instance
 
 
 def test_big_banana_backend_returns_none_when_plugin_missing():

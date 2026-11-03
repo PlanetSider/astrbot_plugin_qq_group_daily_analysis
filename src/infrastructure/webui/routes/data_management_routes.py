@@ -5,12 +5,14 @@ WebUI 插件数据与持久化快照管理路由 (Data Management Routes)
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 from ....shared.constants import PLUGIN_NAME
 from ....utils.logger import logger
+from ...config.config_backup_reader import ConfigBackupReader
 from ..web_compat import WebApiResponse, error_response, json_response, request
 
 if TYPE_CHECKING:
@@ -285,6 +287,37 @@ class DataManagementRoutes:
             logger.error(f"清空配置历史自动备份异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
 
+    async def api_get_config_backups(self) -> WebApiResponse:
+        """列出只读配置备份及文件内的版本、时间。"""
+        data_dir = self._get_plugin_data_dir()
+        if data_dir is None:
+            return error_response("插件数据目录尚不可用", status_code=503)
+        try:
+            items = await asyncio.to_thread(
+                ConfigBackupReader(data_dir / "config_backups").list_backups
+            )
+            return json_response({"status": "ok", "data": {"items": items}})
+        except OSError:
+            return error_response("暂时无法读取配置备份目录", status_code=500)
+
+    async def api_get_config_backup(self) -> WebApiResponse:
+        """读取列表中一份备份的原始 JSON。"""
+        data_dir = self._get_plugin_data_dir()
+        if data_dir is None:
+            return error_response("插件数据目录尚不可用", status_code=503)
+        filename = request.query.get("filename", "")
+        try:
+            detail = await asyncio.to_thread(
+                ConfigBackupReader(data_dir / "config_backups").read, filename
+            )
+            return json_response({"status": "ok", "data": detail})
+        except ValueError as exc:
+            return error_response(str(exc), status_code=400)
+        except FileNotFoundError:
+            return error_response("这份备份已不存在，请刷新列表", status_code=404)
+        except OSError:
+            return error_response("暂时无法读取这份备份", status_code=500)
+
     async def api_get_incremental_groups(self) -> WebApiResponse:
         """获取所有拥有增量批次或游标记录的群号列表"""
         try:
@@ -294,7 +327,7 @@ class DataManagementRoutes:
                 tracked.update(await store.get_tracked_groups())
 
             if self.trace_store:
-                for g in self.trace_store.get_distinct_groups():
+                for g in await asyncio.to_thread(self.trace_store.get_distinct_groups):
                     gid = str(g.get("group_id", "")).strip()
                     if gid:
                         tracked.add(gid)
@@ -503,7 +536,8 @@ class DataManagementRoutes:
                     "CheckpointStore not initialized", status_code=503
                 )
 
-            items, total = store.list_all_checkpoints(
+            items, total = await asyncio.to_thread(
+                store.list_all_checkpoints,
                 limit=query_dto.get("limit", 50),
                 offset=query_dto.get("offset", 0),
                 group_id=query_dto.get("group_id"),
@@ -526,7 +560,9 @@ class DataManagementRoutes:
                 return error_response(
                     "CheckpointStore not initialized", status_code=503
                 )
-            groups = store.get_distinct_checkpoint_groups()
+            groups = await asyncio.to_thread(
+                store.get_distinct_checkpoint_groups,
+            )
             return json_response({"status": "ok", "data": {"groups": groups}})
         except Exception as e:
             logger.error(f"获取 Checkpoint 群号列表异常: {e}", exc_info=True)
@@ -570,7 +606,8 @@ class DataManagementRoutes:
                     "CheckpointStore not initialized", status_code=503
                 )
 
-            detail = store.get_checkpoint_detail(
+            detail = await asyncio.to_thread(
+                store.get_checkpoint_detail,
                 query_dto["group_id"],
                 query_dto["date_str"],
                 query_dto["stage_name"],
@@ -625,14 +662,19 @@ class DataManagementRoutes:
                 )
 
             if delete_dto.get("stage_name"):
-                deleted = store.delete_checkpoint(
+                deleted = await asyncio.to_thread(
+                    store.delete_checkpoint,
                     delete_dto["group_id"],
                     delete_dto["date_str"],
                     delete_dto["stage_name"],
                     trace_id=delete_dto["trace_id"],
                 )
             else:
-                store.clear_checkpoints(delete_dto["group_id"], delete_dto["date_str"])
+                await asyncio.to_thread(
+                    store.clear_checkpoints,
+                    delete_dto["group_id"],
+                    delete_dto["date_str"],
+                )
                 deleted = True
 
             return json_response(

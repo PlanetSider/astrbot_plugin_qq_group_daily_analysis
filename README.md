@@ -2,7 +2,7 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.8.3.4-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v5.9.3.1-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
@@ -28,7 +28,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 <img src="https://count.getloli.com/@astrbot-qq-group-daily-analysis?name=astrbot-qq-group-daily-analysis&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </div>
 
-本自用版作者为 **PlanetSider**，独立插件标识为 `astrbot_plugin_qq_group_daily_analysis_planetsider`，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。仓库名称保持不变，插件的注册名称、配置、数据目录、控制台路由和定时任务均使用独立标识。本次合并了上游 v5.8.3 及后续素材压缩修复（`4e53ad9`），包含模板 CDN 配置与检测、群聊 T2I 配置适配、图片生成与诊断修复，保留自用版投递功能，版本号为 v5.8.3.1。自用版版本号采用 `vX.X.X.N`：前三位与上游版本一致，每次合并新的上游版本时末位从 `1` 开始；同一上游版本内再次修改时仅递增末位。
+本自用版作者为 **PlanetSider**，独立插件标识为 `astrbot_plugin_qq_group_daily_analysis_planetsider`，插件源身份为 `PlanetSider/astrbot_plugin_qq_group_daily_analysis_planetsider`，基于 [SXP-Simon 的上游项目](https://github.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis) 修改。仓库名称保持不变，插件的注册名称、配置、数据目录、控制台路由和定时任务均使用独立标识。本次合并了上游 v5.9.3（`96f2972`），同步自定义 T2I 服务、每轮独立资源与优先级回退、配置备份查看、`/stop` 中止手动分析、模板预览与渲染诊断等更新，保留自用版投递功能，版本号为 v5.9.3.1。自用版版本号采用 `vX.X.X.N`：前三位与上游版本一致，每次合并新的上游版本时末位从 `1` 开始；同一上游版本内再次修改时仅递增末位。
 
 在 AstrBot 的插件源管理中添加 [自用插件源地址](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)，刷新后选择作者为 `PlanetSider` 的“群分析总结插件自用版”。该源的安装包指向 `feature/serverchan-summary-routing` 分支。
 
@@ -56,29 +56,29 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
   <tr>
     <td align="center" width="33.3%" valign="top">
       <p><b>HatsuneMiku (默认)</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.jpg" alt="HatsuneMiku 示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.webp" alt="HatsuneMiku 示例" height="520"></a>
     </td>
     <td align="center" width="33.3%" valign="top">
       <p><b>maria</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.jpg" alt="圣母在上 (Maria · 山百合会) 报告示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.webp" alt="圣母在上 (Maria · 山百合会) 报告示例" height="520"></a>
     </td>
     <td align="center" width="33.3%" valign="top">
       <p><b>Scrapbook</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/scrapbook-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/scrapbook-demo.jpg" alt="Scrapbook 示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/scrapbook-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/scrapbook-demo.webp" alt="Scrapbook 示例" height="520"></a>
     </td>
   </tr>
   <tr>
     <td align="center" width="33.3%" valign="top">
       <p><b>Hack</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/hack-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/hack-demo.jpg" alt="Hack 示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/hack-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/hack-demo.webp" alt="Hack 示例" height="520"></a>
     </td>
     <td align="center" width="33.3%" valign="top">
       <p><b>ATRI</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.jpg" alt="ATRI 示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.webp" alt="ATRI 示例" height="520"></a>
     </td>
     <td align="center" width="33.3%" valign="top">
       <p><b>DeepSeek 鲸鱼女仆娘</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.jpg" alt="DeepSeek 鲸鱼女仆娘报告示例" height="520"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.webp" alt="DeepSeek 鲸鱼女仆娘报告示例" height="520"></a>
       <p><code>deepseek_maid</code> · <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid/SOURCE-NOTICE.md">素材署名与许可</a></p>
     </td>
   </tr>
@@ -89,7 +89,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 <table align="center" width="100%">
   <tr>
     <td align="center" width="100%" valign="top">
-      <img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.jpg" alt="群每日漫画功能" width="60%">
+      <img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.webp" alt="群每日漫画功能" width="60%">
       <p><b>参考 Atri 人格的群每日漫画 Demo</b></p>
     </td>
   </tr>
@@ -459,14 +459,17 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 #### 模板设置
 
 ```
-/查看模板
+/查看模板 [模板名称或序号]
 /设置模板 [模板名称或序号]
 ```
 
-- `/查看模板`: 查看所有可用模板及预览图
+- `/查看模板`: 查看可用模板及预览图；QQ 官方 Bot 每次展示一张，可用按钮填入翻页或切换命令，没有相关权限时使用普通消息
+- `/查看模板 [序号或名称]`: 查看指定模板，例如 `/查看模板 2`；查看和设置仍需管理员权限
 - `/设置模板`: 查看当前模板和可用模板列表
 - `/设置模板 [序号]`: 切换到指定序号的模板
 - 例如：`/设置模板 1` 或 `/设置模板 scrapbook`
+
+发送预览时会自动转为 JPEG 并复用缓存，兼容平台图片接口；WebUI 画廊仍使用 WebP。
 
 ### 大模型原生函数调用 (LLM Tools)
 
@@ -664,7 +667,7 @@ AstrBot 更新插件时会先删除旧插件目录，再解压或移动新目录
 
 #### 🔍 报错根因拆解
 
-十六进制 `496e7465726e616c2053` 转为 ASCII 文本即为 **`Internal S`**（`Internal Server Error`）。说明 T2I 渲染服务在调用 Playwright / Chromium 无头浏览器生成截图时遭遇了内部错误或超时，向 AstrBot 返回了 **HTTP 500 纯文本**而非合法的 PNG/JPEG 二进制图片流。
+十六进制 `496e7465726e616c2053` 转为 ASCII 文本即为 **`Internal S`**（`Internal Server Error`）。说明 T2I 渲染服务在调用 Playwright / Chromium 无头浏览器生成T2I时遭遇了内部错误或超时，向 AstrBot 返回了 **HTTP 500 纯文本**而非合法的 PNG/JPEG 二进制图片流。
 
 ---
 
@@ -672,12 +675,18 @@ AstrBot 更新插件时会先删除旧插件目录，再解压或移动新目录
 
 > [!IMPORTANT]
 > **排查手段 1：外链大字体包/图片 CDN 下载阻塞（国内服务器高发）**
-> - **模板图片加载慢时，可以换个 CDN**：在插件 WebUI 的「图片渲染策略 → 模板资源 CDN 基础地址」选择预设，也可以手填支持 `/gh/` 和 `/npm/` 的网站地址。国内网络可先试 JSDMirror（`https://cdn.jsdmirror.com/`、`https://cdn.jsdmirror.cn/`），另提供 NOISE（`https://jsd.cdn.noisework.cn/`）和哔哩 CDN（`https://cdn.bili33.top/`）备选，请按实际网络检测选用。海外网络可先试 jsDelivr（`https://cdn.jsdelivr.net/`），或 Fastly、Gcore 入口（`https://fastly.jsdelivr.net/`、`https://gcore.jsdelivr.net/`）。每次使用一个地址，使用前请测试实际网络的速度和可达性。点「检测可用性」会检查机器人所在服务器能否访问模板资源及 npm 链接，只请求响应头，不下载文件；使用远程图片渲染服务时，请再生成一份报告确认。内置 SBTI、ACGTI 图片也使用所选 CDN，用户自定义图片和 Google 字体仍按各自设置加载。
+> - **每轮单独配置资源**：在插件 WebUI 的「图片渲染方案」点击「添加渲染方案」（AstrBot 配置页为「添加条目」），选择海外、内地或自定义 T2I 方案，再修改这一轮的模板 CDN、Google Fonts 和 Gstatic 地址。AstrBot 配置页使用下拉预设和“自定义地址”入口，保存后会显示并保留实际地址；插件 WebUI 可直接在选框中输入。两端共用配置，已打开的页面需重新打开后查看另一端的修改。CDN 需支持 `/gh/` 和 `/npm/`。使用前请测试T2I服务所在网络的速度和可达性；「检测可用性」检查的是机器人服务器，远程 T2I 仍需实际生成报告确认。
+> - **自定义服务的字体加载方式**：通常保持「在线字体」。已在T2I服务安装字体，或字体下载经常超时且愿意接受备用字体时，可选择「使用已安装字体」；只影响本轮图片报告，素材图片仍需 CDN。安装位置、完整字体清单及适用情况见[字体安装指南](https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/docs/T2I_FONTS.md)。
+> - **配置多轮回退**：可为不同轮次填写不同 CDN，也可以只更换字体地址。优先级越小越先执行，同优先级按列表顺序执行；资源地址变化时重新准备 HTML，成功后停止。所有轮次共用 5 分钟总等待上限。独立 HTML 报告和模板预览采用第一优先级方案的资源地址。
+> - **先单独测试渲染服务**：三种方案均有「测试渲染」按钮，不用先保存，也不消耗大模型 Token 或向群里发消息。海外／内地方案可测试 AstrBot 默认配置，或已有群聊绑定的配置；自定义方案测试当前填写的地址和 Token。测试小图不加载外链字体和图片，不能代替完整报告的素材检查。容器名称支持下划线，但两个容器需要网络互通；配置示例见[渲染方案与容器网络说明](docs/REPORT_TEMPLATE_GUIDE.md#52-模板内部引用的图片重要渲染链路约束)。
+> - **添加自定义T2I服务**：添加时可选「海外方案」「内地方案」或「自定义 T2I 方案」。前两种跟随本群绑定的 AstrBot 配置，未配置地址时仍由框架使用官方服务。自定义方案默认填入 `http://127.0.0.1:8999/text2img`，可修改地址并填写可选 Token，兼容官方独立服务与 [插件形式的 T2I 服务](https://github.com/XTsat/astrbot_plugin_t2i_service)。它直接连接指定服务，不读取 AstrBot 地址或环境代理。T2I超时默认 20 秒，请求等待上限默认 40 秒，两项可独立设置，为服务内部切换备用地址和返回图片留出时间；停止操作与五分钟总上限仍生效。自定义方案的资源环境默认海外，可切换内地；空资源地址跟随环境预设，手填地址优先。容器中的 `127.0.0.1` 指向该容器，其他容器或宿主机服务需填写对应地址。本地T2I不会自动缓存外链素材。
+> - **查看升级前的配置**：在「数据管理 → 存储空间概览 → 配置自动备份」点击「查看备份」，可以查看旧版本、备份时间和原始 JSON 层级。升级时先归档旧快照再迁移配置，正常保存后同步更新保护快照；旧资源项不再长期保留在正式配置中。没有历史快照时只能使用预设，无法自动找回已被宿主清理的旧地址。
+> - **默认与旧配置**：初始提供海外（优先级 10）和内地（优先级 20）两项方案（均为 PNG、高分辨率、20 秒），默认 CDN 保留原地址。旧方案缺少资源字段时，升级会将原环境级地址补入方案并保存一次；已有的新字段和自定义图片保留。之后每轮独立生效，新字段留空使用该预设的默认地址。保存后列表按优先级排列，同优先级保持原顺序；清空列表后恢复上述两项，已有非空列表不会自动增加条目。渲染成功但缺少个别素材时，不会自动进入下一轮。
 > - **原因**：Playwright `page.goto` 默认使用 `wait_until="load"` 策略，会阻塞等待 HTML 报告中引入的所有外链 CSS、字体包及角色立绘图片全部下载完毕。部分精美模板包含 30MB+ 的中文字体文件或引用的海外 CDN（如 jsDelivr/Fastly），若国内服务器网络波动，50 秒内未全部下载完毕便会触发超时抛出 500。
 > - **解决方案**：
 >   1. **优先走 IPv4 路由（推荐）**：国内云服务器（如腾讯云/阿里云）默认启用了 IPv6，但访问海外 CDN 经常遭遇 IPv6 握手黑洞（超时等待 15~30s）。在宿主机编辑 `/etc/gai.conf`，追加 `precedence ::ffff:0:0/96 100` 强制系统优先走 IPv4。
->   2. **切换访问环境为 `Overseas`**：在配置中心将访问环境设置为 `Overseas`，直连 Google 官方 Anycast CDN（支持分包切片秒级加载）。
->   3. **利用双轮渲染容灾**：插件内置双轮渲染机制。若第一轮因大文件下载超时，Chromium 会将已下载资源存入本地缓存，第二轮（建议配置 `jpeg` + `100000ms`）即可直接命中缓存秒级生成。
+>   2. **尝试海外资源环境**：添加一项海外预设方案，或直接修改这一轮的 CDN 和字体地址，并从T2I服务所在网络测试。
+>   3. **配置资源环境回退**：例如第一项使用内地预设，第二项使用海外预设或另一 CDN，并降低分辨率或 JPEG 质量。只有前一项渲染失败才会执行下一项，全部失败后沿用原有的文字回退流程；是否复用浏览器缓存由渲染服务决定。
 
 > [!IMPORTANT]
 > **排查手段 2：容器化部署未挂载共享数据卷 (Volume)**

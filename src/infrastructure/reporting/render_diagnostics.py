@@ -9,11 +9,44 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal, Required, TypedDict
 
 import ulid
 
 from ...shared.trace_context import TraceContext
 from ...utils.template_utils import render_template
+
+if TYPE_CHECKING:
+    from ..config.rendering_config import (
+        FontMode,
+        RenderingResourceConfig,
+        ScreenshotOptions,
+    )
+    from .html_renderer import RenderServiceInfo
+
+
+class RenderAttemptRecord(TypedDict, total=False):
+    """单轮渲染的只读观测记录，不包含服务凭据或报告正文。"""
+
+    attempt: int
+    strategy_name: str
+    priority: int | None
+    service_type: Literal["astrbot", "custom"]
+    font_mode: FontMode
+    resource_environment: str
+    resource_urls: RenderingResourceConfig | None
+    render_timeout_ms: int | None
+    request_timeout_ms: int | None
+    started_at: float
+    duration_ms: float
+    status: Literal["running", "success", "failed", "cancelled"]
+    type: str
+    viewport: str
+    error: str
+    return_type: Required[str]
+    render_service: RenderServiceInfo
+    returned_bytes: int
+    file_exists: bool
 
 
 def summarize_render_error(text: str) -> str:
@@ -112,8 +145,8 @@ def diagnose_non_image_payload(data: bytes) -> str:
 
 
 def resolve_t2i_viewport_options(
-    html_content: str, image_options: dict
-) -> tuple[dict, str]:
+    html_content: str, image_options: ScreenshotOptions
+) -> tuple[ScreenshotOptions, str]:
     """优先使用模板 meta 声明的视口，缺失维度使用插件配置的兜底值。
 
     Args:

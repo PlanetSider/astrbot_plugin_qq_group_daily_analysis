@@ -11,11 +11,11 @@ vi.mock("../../../../entities/config/api/configApi", async (importOriginal) => (
 }));
 vi.mock("../../../../shared/lib/useTheme", () => ({ useTheme: () => ({ isDark: false }) }));
 
-function CdnField({ initial }: { initial: string }) {
+function CdnField({ initial, fieldKey = "cdn_base_url" }: { initial: string; fieldKey?: string }) {
   const [value, setValue] = useState<unknown>(initial);
   return (
     <FieldRenderer
-      fieldKey="t2i_cdn_base_url"
+      fieldKey={fieldKey}
       fieldSchema={{ type: "string", description: "模板资源 CDN 基础地址", default: DEFAULT_TEMPLATE_CDN_BASE_URL }}
       value={value}
       onChange={setValue}
@@ -60,7 +60,21 @@ describe("CDN 预设与自定义地址", () => {
     render(<CdnField initial={DEFAULT_TEMPLATE_CDN_BASE_URL} />);
     fireEvent.click(screen.getByLabelText("close-circle"));
     expect(screen.getByRole("combobox")).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "检测可用性" })).not.toBeInTheDocument();
+    expect(testTemplateCdn).not.toHaveBeenCalled();
+  });
+
+  it.each(["cdn_base_url"])("环境字段 %s 保留预设和地址检测", async (key) => {
+    render(<CdnField initial="https://custom.example" fieldKey={key} />);
+    expect(screen.getByRole("combobox")).toHaveValue("https://custom.example");
     fireEvent.click(screen.getByRole("button", { name: "检测可用性" }));
-    await waitFor(() => expect(testTemplateCdn).toHaveBeenCalledWith(""));
+    await waitFor(() => expect(testTemplateCdn).toHaveBeenCalledWith("https://custom.example"));
+  });
+
+  it("环境地址留空时不误测默认站点", () => {
+    render(<CdnField initial="" fieldKey="cdn_base_url" />);
+    expect(screen.queryByRole("button", { name: "检测可用性" })).not.toBeInTheDocument();
+    expect(screen.getByText(/留空使用当前资源环境的预设/)).toBeInTheDocument();
+    expect(testTemplateCdn).not.toHaveBeenCalled();
   });
 });

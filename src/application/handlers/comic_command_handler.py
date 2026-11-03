@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from ...infrastructure.platform.bot_manager import BotManager
     from ...infrastructure.webui.active_task_manager import ActiveTaskManager
     from ..services.comic_application_service import ComicApplicationService
+    from ..services.stop_request import StopRequest
 
 
 class ComicCommandHandler:
@@ -217,7 +218,7 @@ class ComicCommandHandler:
             trace_id = TraceContext.generate(
                 prefix="comic", group_name=group_name or group_id
             )
-            trace = TraceContext.set(
+            trace = await TraceContext.set_async(
                 trace_id=trace_id,
                 group_id=group_id,
                 group_name=group_name or group_id,
@@ -243,7 +244,8 @@ class ComicCommandHandler:
             if not result.get("success"):
                 reason = result.get("reason")
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.FAIL,
                         error_message=f"提取漫画话题失败: {reason}",
                     )
@@ -284,23 +286,28 @@ class ComicCommandHandler:
                 yield event.plain_result(message)
             elif status == "duplicate":
                 if trace and trace.status == "running":
-                    trace.finish(
-                        event=TaskEvent.WARN, error_message="该群已有漫画任务正在执行"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.WARN,
+                        error_message="该群已有漫画任务正在执行",
                     )
                 if trace_id and self.active_task_manager:
                     await self.active_task_manager.finish_task(trace_id)
                 yield event.plain_result("🎨 该群已有漫画任务正在执行，请稍后再试哦~")
             elif status == "blocked":
                 if trace and trace.status == "running":
-                    trace.finish(
-                        event=TaskEvent.WARN, error_message="此群未启用漫画生成功能"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.WARN,
+                        error_message="此群未启用漫画生成功能",
                     )
                 if trace_id and self.active_task_manager:
                     await self.active_task_manager.finish_task(trace_id)
                 yield event.plain_result("❌ 此群未启用漫画生成功能")
             elif status == "no_topics":
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.WARN,
                         error_message="未提取到可用于生成漫画的话题",
                     )
@@ -309,8 +316,10 @@ class ComicCommandHandler:
                 yield event.plain_result("❌ 未提取到可用于生成漫画的话题")
             else:
                 if trace and trace.status == "running":
-                    trace.finish(
-                        event=TaskEvent.FAIL, error_message="漫画生成任务未启动"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.FAIL,
+                        error_message="漫画生成任务未启动",
                     )
                 if trace_id and self.active_task_manager:
                     await self.active_task_manager.finish_task(trace_id)
@@ -318,8 +327,10 @@ class ComicCommandHandler:
 
         except DuplicateGroupTaskError:
             if trace and trace.status == "running":
-                trace.finish(
-                    event=TaskEvent.FAIL, error_message="该群的漫画话题提取任务正在执行"
+                await asyncio.to_thread(
+                    trace.finish,
+                    event=TaskEvent.FAIL,
+                    error_message="该群的漫画话题提取任务正在执行",
                 )
             if trace_id and self.active_task_manager:
                 await self.active_task_manager.finish_task(trace_id)
@@ -327,8 +338,10 @@ class ComicCommandHandler:
         except asyncio.CancelledError:
             if trace and trace.status == "running":
                 try:
-                    trace.finish(
-                        event=TaskEvent.ABORT, error_message="Task cancelled by system"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.ABORT,
+                        error_message="Task cancelled by system",
                     )
                 except RuntimeError as transition_error:
                     logger.info(f"取消收尾时任务已由并发事件收敛: {transition_error}")
@@ -337,7 +350,9 @@ class ComicCommandHandler:
             logger.info("手动漫画任务被取消（插件正在关闭或重载）")
         except Exception as e:
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.FAIL, error_message=str(e))
+                await asyncio.to_thread(
+                    trace.finish, event=TaskEvent.FAIL, error_message=str(e)
+                )
             if trace_id and self.active_task_manager:
                 await self.active_task_manager.finish_task(trace_id)
             logger.error(f"手动漫画生成失败: {e}", exc_info=True)
@@ -415,6 +430,7 @@ class ComicCommandHandler:
         *,
         require_auto_enabled: bool = True,
         trace: TraceContext | None = None,
+        stop_request: StopRequest | None = None,
     ) -> str:
         """尝试触发后台漫画生成。
 
@@ -424,14 +440,17 @@ class ComicCommandHandler:
             analysis_result: 分析结果字典（包含 topics 字段）。
             require_auto_enabled: 是否要求开启自动生成配置（手动指令触发时为 False）。
             trace: 当前执行链路追踪上下文。
+            stop_request: 仅关联本次手动分析新建的漫画任务，定时任务不传入。
 
         Returns:
             str: 触发状态（"started"、"duplicate"、"blocked"、"no_topics"、
                 "disabled"、"auto_disabled"、"delivery_disabled"、
-                "delivery_unavailable" 或 "terminating"）。
+                "delivery_unavailable"、"terminating" 或 "stopped"）。
         """
         if self.terminating:
             return "terminating"
+        if stop_request is not None and stop_request.refresh():
+            return "stopped"
         enabled_getter = getattr(self.config_manager, "get_enable_daily_comic", None)
         if callable(enabled_getter) and not enabled_getter():
             return "disabled"
@@ -520,6 +539,7 @@ class ComicCommandHandler:
                 platform_id,
                 umo,
                 trace=trace,
+                stop_request=stop_request,
             )
         )
         self._comic_group_tasks[task_key] = task
@@ -532,6 +552,8 @@ class ComicCommandHandler:
                 else None
             )
         )
+        if stop_request is not None:
+            stop_request.cancel_on_stop(task)
         return "started"
 
     async def _trigger_comic_generation(
@@ -541,6 +563,7 @@ class ComicCommandHandler:
         platform_id: str | None,
         umo: str,
         trace: TraceContext | None = None,
+        stop_request: StopRequest | None = None,
     ) -> None:
         """按实时投递配置生成并上传漫画，通过信号量控制并发。
 
@@ -550,6 +573,13 @@ class ComicCommandHandler:
             platform_id: 源群平台实例 ID。
             umo: 源群会话 ID，用于选择绘图配置。
             trace: 当前任务追踪上下文。
+            stop_request: 所属手动分析的停止请求，防止取消后仍交付迟到结果。
+
+        Returns:
+            None。
+
+        Raises:
+            asyncio.CancelledError: 本次漫画任务被取消。
         """
         cur_trace = trace or TraceContext.current()
         if cur_trace:
@@ -558,7 +588,9 @@ class ComicCommandHandler:
             _current_trace.set(cur_trace)
 
         async with self._comic_semaphore:
-            if self.terminating:
+            if self.terminating or (
+                stop_request is not None and stop_request.refresh()
+            ):
                 return
             try:
                 current_target = self._resolve_delivery_target(group_id, platform_id)
@@ -578,6 +610,8 @@ class ComicCommandHandler:
                 comic_bytes, fallback_url = await self.comic_service.generate_comic(
                     topics, group_id, umo
                 )
+                if stop_request is not None and stop_request.refresh():
+                    return
                 target = self._resolve_delivery_target(group_id, platform_id)
                 if target is None:
                     logger.info("总结投递配置已关闭群目标，取消群漫画发送。")

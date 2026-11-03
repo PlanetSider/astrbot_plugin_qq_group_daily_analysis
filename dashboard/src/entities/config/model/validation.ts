@@ -1,4 +1,4 @@
-import { cdnBaseUrlSchema } from "./renderingConfig";
+import { cdnBaseUrlSchema, fontBaseUrlSchema, renderingStrategySchema } from "./renderingConfig";
 import { z } from "zod";
 import { PluginSchema, SchemaFieldItem } from "./types";
 
@@ -28,7 +28,11 @@ export function buildFieldZodSchema(
   fieldKey: string,
   field: SchemaFieldItem
 ): z.ZodType {
-  if (fieldKey === "t2i_cdn_base_url") return cdnBaseUrlSchema.optional();
+  if (fieldKey === "cdn_base_url") {
+    return cdnBaseUrlSchema.optional();
+  }
+  if (["google_fonts", "gstatic"].includes(fieldKey)) return fontBaseUrlSchema.optional();
+  if (fieldKey === "t2i_rendering_strategies") return z.array(renderingStrategySchema).optional();
 
   // 1. 单选下拉选项校验（排除 list 多选类型以及可自定义的 report_template）
   if (

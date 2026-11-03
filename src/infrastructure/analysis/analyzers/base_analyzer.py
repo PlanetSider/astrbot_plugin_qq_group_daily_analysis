@@ -281,7 +281,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
                 self.validate_parsed_data(regex_data)
             )
             if validated_success and validated_data:
-                logger.info(
+                logger.warning(
                     f"{self.get_data_type()}结构化解析失败后，正则降级提取成功，获得 {len(validated_data)} 条数据"
                 )
                 return True, validated_data, None
@@ -308,7 +308,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
         if not system_prompt or not system_prompt.strip():
             return prompt
 
-        logger.info(f"[{self.get_data_type()}分析] 已启用人格设定（深度强化模式）")
+        logger.debug(f"[{self.get_data_type()}分析] 已启用人格设定（深度强化模式）")
 
         # 构造更具强制性的标识符
         persona_content = system_prompt.strip()
@@ -326,7 +326,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
             f"1. 你不再是通用的 AI 助手，你是上述设定中的角色，我将在此处再次提醒你的身份：\n{persona_content}\n 正在观察并点评这些群聊数据。\n"
             f"2. 请务必使用该角色的第一人称视角 or 其独有的观察视角进行‘{self.get_data_type()}’输出。\n"
             "3. 你的分析成果必须体现该角色的性格色彩，禁止输出中立、客套、公式化的 AI 话术。\n"
-            "4. ⚠️ 格式铁律：无论人格多么狂放，最终输出的内容必须严格遵守‘ MISSION_DIRECTIVE ’中所要求的纯 JSON 格式。除了 JSON 数据外，严禁输出任何 Markdown 标记或角色扮演的额外闲聊。"
+            "4. 格式要求：人格设定只影响表达风格，不改变 MISSION_DIRECTIVE 中要求的 JSON 结构、字段格式和用户引用标记（如 [用户ID]）。除了 JSON 数据外，不要添加 Markdown 代码块或角色扮演的额外闲聊。"
         )
 
     async def analyze(
@@ -356,7 +356,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
             logger.debug(f"{self.get_data_type()}分析输入数据长度: {data_length}")
 
             prompt = self.build_prompt_with_override(data, prompt_override)
-            logger.info(f"开始{self.get_data_type()}分析，构建提示词完成")
+            logger.debug(f"开始{self.get_data_type()}分析，构建提示词完成")
             logger.debug(
                 f"{self.get_data_type()}分析prompt长度: {len(prompt) if prompt else 0}"
             )
@@ -391,7 +391,7 @@ class BaseAnalyzer(ABC, Generic[TDataObject, TInputData]):
             # 应用人格强化注入
             prompt = self._apply_persona_reinforcement(prompt, system_prompt)
 
-            logger.info(f"[{self.get_data_type()}分析] 开始发起 LLM 请求, umo: {umo}")
+            logger.debug(f"[{self.get_data_type()}分析] 开始发起 LLM 请求, umo: {umo}")
 
             from ....shared.trace_context import TraceContext
 

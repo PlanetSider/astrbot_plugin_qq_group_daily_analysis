@@ -4,6 +4,10 @@ import { mockTraces } from "./data/traces";
 import { mockReportHistory, mockReportTemplates } from "./data/reports";
 import { mockPluginConfig, mockProviders, mockPersonas } from "./data/configs";
 import { mockPluginLogs } from "./data/logs";
+import { mockConfigBackups } from "./data/configBackups";
+import { mockGroups } from "./data/groups";
+import { TAG_STYLE_MAP } from "../entities/log/model/types";
+import type { AvailableTag } from "../entities/log/model/types";
 import {
   mockPluginDataOverview,
   mockIncrementalBatches,
@@ -22,6 +26,10 @@ export interface MockHandlerResponse<T = unknown> {
 }
 
 export const mockHandlers = {
+  "POST config/test-t2i": () => ({
+    status: "error",
+    message: "演示模式不进行真实渲染，请连接 AstrBot 插件后再试。",
+  }),
   "POST config/test-template-cdn": () => ({
     status: "error",
     message: "演示模式不进行真实网络检测，请连接 AstrBot 插件后再试。",
@@ -62,8 +70,16 @@ export const mockHandlers = {
   },
   "GET traces/:traceId": (params?: Record<string, unknown>, pathParams?: Record<string, string>) => {
     const traceId = pathParams?.traceId || (params?.traceId as string);
-    const item = mockTraces.find((t) => t.trace_id === traceId) || mockTraces[0];
-    return { status: "ok", data: item };
+    const item = mockTraces.find((t) => t.trace_id === traceId);
+    if (item) return { status: "ok", data: item };
+    const task = mockActiveTasks.find((t) => t.task_id === traceId);
+    if (task) return { status: "ok", data: {
+      trace_id: task.task_id, group_id: task.group_id, group_name: task.group_name,
+      platform: task.platform, trigger_type: task.trigger_type, status: "running",
+      current_stage: task.current_stage, started_at: task.started_at, duration_ms: task.duration_s * 1000,
+      spans: [],
+    } };
+    return { status: "error", data: null, message: "未找到任务记录" };
   },
   "GET traces/:traceId/logs": (params?: Record<string, unknown>, pathParams?: Record<string, string>) => {
     const traceId = pathParams?.traceId || (params?.traceId as string);
@@ -72,14 +88,7 @@ export const mockHandlers = {
   },
   "GET groups": () => ({
     status: "ok",
-    data: [
-      "123456789",
-      "987654321",
-      "8899001122",
-      "-1001987654321",
-      "1082739182374",
-      "9988776655",
-    ],
+    data: mockGroups,
   }),
   "GET providers": () => ({ status: "ok", data: mockProviders }),
   "GET personas": () => ({ status: "ok", data: mockPersonas }),
@@ -160,13 +169,13 @@ export const mockHandlers = {
           (l.logger_name && l.logger_name.toLowerCase().includes(q))
       );
     }
-    const tags = Array.from(new Set(mockPluginLogs.map((l) => l.tag).filter(Boolean)));
+    const tags: AvailableTag[] = Object.entries(TAG_STYLE_MAP).map(([key, value]) => ({ key, label: value.label }));
     return {
       status: "ok",
       data: {
         items,
         total: items.length,
-        available_tags: tags.map((t) => ({ tag: t, count: mockPluginLogs.filter((l) => l.tag === t).length })),
+        available_tags: tags,
       },
     };
   },
@@ -189,6 +198,11 @@ export const mockHandlers = {
 
   // 7. 数据存储管理
   "GET plugin-data/overview": () => ({ status: "ok", data: mockPluginDataOverview }),
+  "GET plugin-data/config-backups": () => ({ status: "ok", data: { items: mockConfigBackups.map((item) => item.backup) } }),
+  "GET plugin-data/config-backups/detail": (params?: Record<string, unknown>) => {
+    const detail = mockConfigBackups.find((item) => item.backup.filename === params?.filename);
+    return detail ? { status: "ok", data: detail } : { status: "error", message: "备份不存在" };
+  },
   "POST plugin-data/:section/clear": () => ({ status: "ok", data: { deleted: 10 } }),
   "GET data/incremental/groups": () => ({
     status: "ok",

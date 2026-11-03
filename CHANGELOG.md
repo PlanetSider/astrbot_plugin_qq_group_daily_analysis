@@ -1,5 +1,54 @@
 # 更新日志 (CHANGELOG)
 
+## [v5.9.3.1] - 自用版同步上游 v5.9.3
+
+*   合并上游至 `96f2972`，同步自定义 T2I 服务（服务地址、Token、已安装字体方式与测试渲染）、每轮独立 CDN/字体资源与优先级回退、历史配置备份查看、`/stop` 中止手动群分析、初音模板素材压缩与大屏折叠修复、QQ 官方机器人模板预览（JPEG 转码与缓存、按钮翻页、跟随会话前缀）、用户引用默认说明修正、日志降噪与任务详情渲染过程、渲染方案单独测试及容器内 T2I 地址校验等更新。
+*   保留自用版独立插件身份、指定群与 QQ 官方目标投递、Server酱推送、飞书机器人通道（独立凭据直连与复用宿主实例两种方式）、来源群标识及各通道失败不回发原群的行为。
+*   自用版版本号升级至 `v5.9.3.1`。
+
+## [v5.9.3] - 修复容器内 T2I 地址校验，渲染方案可单独测试
+
+*   **修复容器内 T2I 地址校验（#280）**：自定义服务支持 `http://goofy_lewin:8999/text2img` 这类带下划线的容器名，两个容器仍需处于可互通的网络中。
+*   **所有渲染方案均可单独测试**：插件 WebUI 的海外、内地和自定义方案都提供「测试渲染」。跟随 AstrBot 的方案可选择默认配置或已有群聊的绑定配置；不消耗大模型 Token、不发送群消息，无需先生成总结。
+
+## [v5.9.2] QQ 官方机器人优化，改善模板预览、排障提示和图片渲染
+
+*   **模板按钮跟随会话前缀**：QQ 翻页、切换模板的按钮命令及相关设置提示使用当前会话的激活前缀，支持多个前缀和空前缀，不再固定添加 `/`。管理员权限检查保持不变，修改前缀后重新打开预览即可。
+
+*   **补全模板预览排障提示**：命令、路由、缓存和 QQ 发送过程可在 DEBUG 中查看；发送失败及降级会提示 WARNING，并保留脱敏后的 QQ 错误原因，兼容不同 SDK 异常格式，无需依赖本体日志。QQ 预览组件未就绪时明确提示，避免无反应的合并转发回退。
+
+*   **改善 QQ 官方机器人内的模板预览**：预览图发送前转为 JPEG 并复用缓存。QQ 官方 Bot 每次展示一张，支持按钮填入翻页和切换命令；没有 Markdown 或按钮权限时使用普通消息。也可用 `/查看模板 序号或名称` 查看指定模板，管理员权限不变。
+
+*   **让 QQ 预览更连贯**：精简重复的模板列表，内置 CDN 图片优先与说明、按钮同卡展示；不支持时先发准备好的图片，再紧接说明。图片准备日志分别显示下载、转码和缓存等待耗时。
+
+*   **更新模板示例图**：使用可复用的日常交流群模拟数据重新生成各主题报告，话题和金句锐评展示头像与昵称引用。预览图改为兼顾体积和文字清晰度的 WebP，整套约 6.5 MiB；模板预览、文档和 CDN 检测同步使用新地址。漫画示例保留原内容。正常生成报告的图片设置不受影响。
+
+## [v5.9.1] - 修正用户引用的默认说明、减少重复日志、任务详情补全图片渲染过程
+
+*   **修正用户引用的默认说明（#276）**：默认话题提示词明确保留用户引用的方括号，并补充实际描述示例；内置人格说明尊重任务要求的字段和引用格式，避免将方括号当作装饰符号省略。已有提示词不自动修改。
+*   **减少重复日志（#275）**：分析请求保留类型、Provider、模型和结果摘要，选择过程、提示词构建及普通重试改为 DEBUG。实际请求失败、切换备用模型、超时和阻塞仍有警告或错误；排障细节仍可在插件 WebUI 的 DEBUG 日志中查看。
+*   **任务详情补全图片渲染过程**：可查看每轮使用的方案、优先级、T2I 服务、字体方式和资源地址，以及渲染超时、请求等待上限和实际耗时。运行中的任务会显示当前轮次；旧任务记录仍可查看。
+
+## [v5.9.0] - 自定义 T2I 服务、每轮资源配置与配置备份查看
+
+*   **支持自定义 T2I 服务（#271、#274）**：添加「自定义 T2I 方案」，可接入官方镜像自建服务或类似于 [兼容官方接口的插件式 T2I 服务 (以此为例说明)](https://github.com/XTsat/astrbot_plugin_t2i_service)。默认地址为 `http://127.0.0.1:8999/text2img`，有鉴权时填写 Token（默认留空就行）；跨容器部署请填写实际可达地址，无需开启 AstrBot 普通回复自动转图。先在插件中装好 Chromium，用 `/t2i_test` 确认能出图，再将服务地址填入本插件。无需开启「自动写入 AstrBot 文转图端点」；如希望只在本地渲染，请关闭「本机渲染不可用时透传上游公共端点」。
+*   **自定义 T2I 可使用已安装字体**：默认仍在线加载字体。自建服务已安装模板字体，或字体下载经常超时且愿意接受外观变化时，可在每轮自定义方案中切换；两端配置均支持，原字体地址保留。仅影响图片T2I，装饰图片仍使用 CDN，独立 HTML 报告保持在线字体。[安装方法与字体清单](https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/docs/T2I_FONTS.md)。
+*   **自定义 T2I 测试渲染**：可在插件 WebUI 中直接测试当前填写的服务地址和 Token，无需先保存；生成的小图仅在当前页面展示，方便确认服务能否正常出图。
+
+*   **每轮独立配置资源和回退**：海外、内地方案沿用群聊绑定的 AstrBot 图片服务；自定义方案使用指定服务。每轮均可选择或填写 CDN、字体地址，优先级数值越小越先尝试，保存后按此顺序展示，同优先级保持原顺序。默认提供海外（10）、内地（20）两项，失败后尝试下一轮，已有非空列表不额外增加条目。T2I默认超时 20 秒；自定义方案可单独设置请求等待上限，默认 40 秒，为服务内部切换备用地址留出时间。图片已生成但缺少个别素材时，不会自动切换下一轮。
+
+*   **支持查看历史配置备份**：在「数据管理 → 存储空间概览 → 配置自动备份」点击「查看备份」，可查看版本、时间及按层级展开的原始键值，仅供查看，不会恢复或修改配置。
+
+## [v5.8.4] - 支持手动停止群分析，改善初音模板加载与布局
+
+*   **手动群分析支持 `/stop`（#270）**：在当前会话执行 AstrBot 的 `/stop`，可中止正在运行的手动群分析，定时分析不受影响。权限和会话范围沿用宿主设置，同一会话内其他人发起的活跃任务也可能收到停止请求。
+*   **减小初音模板素材体积（#266）**：六张装饰 PNG 的总体积减少约 86%，保留透明背景、文件名和素材路径，减轻图片报告和网页报告的资源加载负担，降低网络较慢时装饰图加载不全的概率。
+*   **修复初音网页报告的大屏折叠布局（#267）**：话题、群友画像和金句按当前列数整行折叠，窗口或容器宽度变化时自动重排；内容较少时隐藏展开按钮，避免宽屏下出现半行留白或卡片错位。
+
+---
+
+<details>
+<summary>📋 点击查看历史更新日志</summary>
 ## [v5.8.3.4] - 模板行尾符规范化
 
 *   ATRI 模板的活动图表与聊天质量组件统一为 LF 行尾符，与仓库其余文件一致，消除工作区持续的伪差异提示；模板内容无任何变化。同步自用版版本号。
@@ -34,11 +83,6 @@
 *   **内置人格图片跟随 CDN 设置**：SBTI、ACGTI 图片统一使用配置中的 CDN，兼容旧配置里保存的默认图片地址；用户自行指定的其他图片地址继续按原设置使用。
 *   **清理初音模板无效背景**：移除图片报告和网页报告中无法加载的 `uploaded:` 背景引用及对应的无效装饰元素，保留原有渐变和网格背景。
 
----
-
-<details>
-<summary>📋 点击查看历史更新日志</summary>
-
 ## [v5.8.2] - 适配群聊 T2I 配置，完善图片生成失败提示
 
 *   **按群聊配置选择图片服务**：适配 AstrBot 将 T2I 设置移入独立配置文件后的读取方式。手动分析、定时报告、历史报告重绘和 QQ 图片摘要使用群聊绑定配置中的 T2I 地址，兼容旧版 AstrBot；无法确定群聊会话时沿用默认配置。插件图片报告无需开启 AstrBot 的回复自动转图开关。
@@ -59,7 +103,7 @@
 
 ## [v5.7.8] - 新增圣母在上 (Maria / 山百合会) 古典日报模板、省察窗双角色互动彩蛋与专属分析人格指南
 
-<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.jpg" alt="圣母在上 (Maria · 山百合会) 报告示例" height="520"></a>
+<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria-demo.webp" alt="圣母在上 (Maria · 山百合会) 报告示例" height="520"></a>
 <p><code>maria</code> · <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/maria/persona.md">专属人格与提示词配置指南</a></p>
 
 *   **🌹 【视觉呈现与全新主题】新增「圣母在上 (Maria · 山百合会)」古典学园日报模板 (#257)**：
@@ -143,7 +187,7 @@
 
 ## [v5.7.2] - DeepSeek 女仆娘主题、同群多 Bot Profile 隔离与模型内容安全风控拦截识别
 
-<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.jpg" alt="DeepSeek 鲸鱼女仆娘报告示例" height="520"></a>
+<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid-demo.webp" alt="DeepSeek 鲸鱼女仆娘报告示例" height="520"></a>
 <p><code>deepseek_maid</code> · <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/deepseek_maid/SOURCE-NOTICE.md">素材署名与许可</a></p>
 
 *   **🎨 【视觉呈现与全新主题】新增 DeepSeek 鲸鱼女仆娘日报主题 (#248)**：
@@ -333,7 +377,7 @@
     *   **复古艺术美学设计**：以 19 世纪末新艺术运动与穆夏（Alphonse Mucha）装饰艺术为灵感，采用温润羊皮纸底色、流动藤蔓花纹与古典金边装饰，将群聊数据装帧为古典画报。
     *   **双色交错和谐排版**：核心数据、热议话题、群芳雅鉴与金句回响采用森林绿与复古金双色交替排版，层次分明、典雅克制。
 
-<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/art_nouveau-demo.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/art_nouveau-demo.jpg" alt="art_nouveau 示例" height="520"></a>
+<a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/art_nouveau-demo.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/art_nouveau-demo.webp" alt="art_nouveau 示例" height="520"></a>
 
 
 *   **🪄 【体验优化】模版分析区域智能隐藏（告别未开启功能的空白标题）**：
@@ -434,7 +478,7 @@
     *   **历史旧数据自动迁移自愈**：保存配置时自动扫描并清洗历史残存的 Data URL (Base64) 图片及旧版下划线路径，自动转存为合规物理文件并修正路径，无需用户手动重配。
 
 *   **📦 【优化】Release 深度瘦身与打包规则统一**：
-    *   **规范 `.gitattributes` 导出排除规则**：完善 `.gitattributes` 中的 `export-ignore` 配置，精确排除未压缩的 `assets/HatsuneMiku/` 资源、文档效果截图、前端开发源码 `dashboard/`、测试套件与调试脚本。
+    *   **规范 `.gitattributes` 导出排除规则**：完善 `.gitattributes` 中的 `export-ignore` 配置，精确排除未压缩的 `assets/HatsuneMiku/` 资源、文档效果T2I、前端开发源码 `dashboard/`、测试套件与调试脚本。
     *   **单一数据源驱动打包**：简化 GitHub Actions Release 工作流，完全由标准 `.gitattributes` 规则驱动 `git archive` 生成发布压缩包，使 Release 产物体积从 **7.92 MB 骤降至 1.73 MB**（体积缩减 **78%**），包体更轻量、分发更迅速。
 
 *   **📊 【修复】手动触发群漫画 (`/群漫画`) 任务记录与全流程可观测性**：
@@ -617,7 +661,7 @@
 <table align="center" width="100%">
   <tr>
     <td align="center" width="100%" valign="top">
-      <img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.jpg" alt="群每日漫画功能" width="60%">
+      <img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.webp" alt="群每日漫画功能" width="60%">
       <p><b>参考 Atri 人格的群每日漫画 Demo</b></p>
     </td>
   </tr>
@@ -735,7 +779,7 @@
 ## [v4.9.13] - feat(ATRI): ATRI 模板 (@Liangyu-G)
 *   **✨ 新模板 ATRI**: 感谢 @Liangyu-G 的贡献，新增了一个名为 ATRI 的模板，灵感来源于 ATRI 的可爱风格，适合喜欢二次元风格的用户使用。（“她太可爱了，就是太可爱了，那个剧情也特别好，但她真的太可爱了。在聊天的过程中，Soulter不止一次和我强调了亚托莉可爱这一点，甚至一度说不出其他话了”
 ）
-<img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.jpg" alt="ATRI" width="100%">
+<img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/ATRI-demo.webp" alt="ATRI" width="100%">
 
 ## [v4.9.12] - 移除无效的重试器
 
@@ -752,7 +796,7 @@
 ## [v4.9.8] - feat(HatsuneMiku): 新增了一个名为 HatsuneMiku 的模板 (#134 @Shiitin)
 *   **🐛 黑白名单修复**: 分析名单准入并修复 AstrBot 内置白名单绕过问题 （情况如 #133 所述）
 *   **✨ 新模板 HatsuneMiku**: 感谢 @Shiitin 的贡献，新增了一个名为 HatsuneMiku 的模板，灵感来源于初音未来的可爱风格，适合喜欢二次元风格的用户使用。      
-<img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.jpg" alt="HatsuneMiku" width="100%">
+<img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/HatsuneMiku-demo.webp" alt="HatsuneMiku" width="100%">
 
 ## [v4.9.7] - feat(分析配置细粒度化): 引入三层黑白名单机制（基础群分析开关、定时分析、增量分析），支持更细粒度的群级分析控制；修复自动分析生命周期管理情况避免任务被静默跳过
 *   **🐛 自动分析调度修复**: 修复自动分析任务生命周期检查链路，重置 `schedule_jobs` 后 `_terminating` 状态，避免任务被静默跳过；增量分析任务生命周期行为与定时分析保持一致。(#130 @Dongmayyys)

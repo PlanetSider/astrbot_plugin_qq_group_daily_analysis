@@ -424,7 +424,7 @@ class ReportDispatcher:
         if isinstance(output_formats, str):
             output_formats = [output_formats]
 
-        logger.info(
+        logger.debug(
             f"[{trace_id}] 正在分发群 {group_id} 的报告到会话 {target.session_id} "
             f"(格式: {', '.join(output_formats)})"
         )
@@ -486,7 +486,10 @@ class ReportDispatcher:
             return False
 
         # 1. 检查渲染函数
-        if not self._html_render_func:
+        if not self._html_render_func and not any(
+            plan["render_service"] == "custom"
+            for plan in self.config_manager.get_t2i_rendering_strategy_config()
+        ):
             logger.warning(f"[{trace_id}] 未设置 HTML 渲染函数，回退到文本模式。")
             return await self._dispatch_text(
                 group_id,
@@ -526,7 +529,7 @@ class ReportDispatcher:
             )
 
             if trace:
-                with trace.span(
+                async with trace.span_async(
                     AnalysisStage.RENDER_REPORT,
                     {"format": "image", "template": template_theme},
                 ):
@@ -563,8 +566,8 @@ class ReportDispatcher:
         sent = False
         dest_filename: str | None = None
         if image_url:
-            with (
-                trace_ctx.span(
+            async with (
+                trace_ctx.span_async(
                     AnalysisStage.DISPATCH_REPORT,
                     {
                         "platform": delivery_target.platform_id or "auto",
@@ -621,13 +624,10 @@ class ReportDispatcher:
                                     "created_at": time.time(),
                                 }
                             )
-                        from ...shared.trace_context import _global_trace_store
-
-                        if _global_trace_store is not None:
-                            try:
-                                _global_trace_store.save_trace(trace_ctx.to_dict())
-                            except Exception:
-                                pass
+                        try:
+                            await trace_ctx.persist_snapshot_async()
+                        except Exception as e:
+                            logger.warning(f"保存报告追踪快照失败: {e}")
                 except Exception as e:
                     logger.warning(f"[{trace_id}] 保存历史报告副本失败: {e}")
 
@@ -775,7 +775,7 @@ class ReportDispatcher:
             )
 
             if trace:
-                with trace.span(
+                async with trace.span_async(
                     AnalysisStage.RENDER_REPORT,
                     {"format": "html", "template": template_theme},
                 ):
@@ -810,8 +810,8 @@ class ReportDispatcher:
         html_filename: str | None = None
         sent = False
         if html_path:
-            with (
-                trace_ctx.span(
+            async with (
+                trace_ctx.span_async(
                     AnalysisStage.DISPATCH_REPORT,
                     {
                         "platform": delivery_target.platform_id or "auto",
@@ -846,13 +846,10 @@ class ReportDispatcher:
                                     "created_at": time.time(),
                                 }
                             )
-                        from ...shared.trace_context import _global_trace_store
-
-                        if _global_trace_store is not None:
-                            try:
-                                _global_trace_store.save_trace(trace_ctx.to_dict())
-                            except Exception:
-                                pass
+                        try:
+                            await trace_ctx.persist_snapshot_async()
+                        except Exception as e:
+                            logger.warning(f"保存报告追踪快照失败: {e}")
                 except Exception as e:
                     logger.warning(f"[{trace_id}] 关联 HTML 报告元数据失败: {e}")
 
@@ -979,12 +976,13 @@ class ReportDispatcher:
             analysis_result: 源群分析结果。
             platform_id: 源群平台实例 ID。
             target: 实际投递目标，省略时沿用源群。
+            source_label: 投递内容中标注的来源群标识。
 
         Returns:
             实际发送成功时返回 True。
         """
         delivery_target = target or GroupReportTarget(group_id, platform_id)
-        logger.info(f"[分发器] 正在向会话 {delivery_target.session_id} 分发文本报告")
+        logger.debug(f"[分发器] 正在向会话 {delivery_target.session_id} 分发文本报告")
         trace_ctx = TraceContext.current()
         if not self.report_generator:
             logger.error("[分发器] 报告生成器未初始化，无法生成文本报告。")
@@ -1019,8 +1017,8 @@ class ReportDispatcher:
             delivery_target.platform_id
         )
 
-        with (
-            trace_ctx.span(
+        async with (
+            trace_ctx.span_async(
                 AnalysisStage.DISPATCH_REPORT,
                 {
                     "platform": delivery_target.platform_id or "auto",

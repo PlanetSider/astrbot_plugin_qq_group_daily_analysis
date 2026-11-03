@@ -17,10 +17,11 @@ import json
 import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from markupsafe import Markup
 
+from ...domain.value_objects import QualityReview
 from ...shared.report_language import (
     format_report_date,
     resolve_report_language,
@@ -29,13 +30,58 @@ from ...utils.logger import logger
 from .profile_mappings import resolve_profile_info
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
 
-    from ...domain.value_objects import AnalysisResultPayload
+    from ...domain.value_objects import (
+        AnalysisResultPayload,
+        GoldenQuote,
+        SummaryTopic,
+        UserTitle,
+    )
     from ..config.config_manager import ConfigManager
+    from ..config.rendering_config import FontMode, RenderingResourceConfig
     from ..visualization.activity_charts import ActivityVisualizer
     from .avatar_service import AvatarService
     from .templates import HTMLTemplates
+
+
+class TemplateResourceContext(TypedDict):
+    """主模板与组件共同使用的资源地址及展示选项。"""
+
+    hide_user_names: bool
+    report_language: str | None
+    t2i_font_source: str
+    t2i_font_mode: FontMode
+    t2i_google_fonts_mirror: str
+    t2i_gstatic_mirror: str
+    t2i_atri_font_mirror: str
+    t2i_miku_assets_mirror: str
+    t2i_deepseek_maid_assets_mirror: str
+    t2i_maria_assets_mirror: str
+    t2i_npm_mirror: str
+    cdn_assets_base: str
+
+
+class RenderTemplateContext(TemplateResourceContext):
+    """完成数据准备后传给主模板的固定字段契约。"""
+
+    current_date: str
+    current_datetime: str
+    message_count: int
+    participant_count: int
+    total_characters: int
+    emoji_count: int
+    most_active_period: str
+    topics_html: str
+    titles_html: str
+    quotes_html: str
+    hourly_chart_html: str
+    chat_quality_html: str
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    avatar_reuse_registry: dict[str, str]
+    avatar_reuse_aliases: dict[str, str]
 
 
 class RenderDataPreparer:
@@ -174,6 +220,194 @@ class RenderDataPreparer:
             ]
         return value
 
+    def _build_resource_context(
+        self,
+        environment: str | None,
+        resources: RenderingResourceConfig | None,
+        font_mode: FontMode,
+        hide_user_names: bool,
+    ) -> tuple[TemplateResourceContext, str]:
+        """同步固定本次渲染资源，供主模板、子模板与人格图片共享。
+
+        Args:
+            environment: 当前轮次的资源环境。
+            resources: 当前方案明确指定的资源地址快照。
+            font_mode: 当前轮次的字体加载方式。
+            hide_user_names: 是否隐藏用户姓名。
+
+        Returns:
+            模板共用资源上下文和人格图片需要的 CDN 根地址。
+        """
+        # 在首次异步等待前固定资源地址，主模板与所有组件共用这一快照。
+        if resources is not None:
+            cdn_base_url = resources["cdn_base_url"]
+            google_fonts = resources["google_fonts"]
+            gstatic = resources["gstatic"]
+            assets_base_url = self.config_manager.get_template_assets_base_url(
+                environment, cdn_base_url=cdn_base_url
+            )
+            atri_mirror = self.config_manager.get_t2i_atri_font_mirror(
+                environment, cdn_base_url=cdn_base_url
+            )
+        else:
+            assets_base_url = (
+                self.config_manager.get_template_assets_base_url(environment)
+                if environment
+                else self.config_manager.get_template_assets_base_url()
+            )
+            cdn_base_url = (
+                self.config_manager.get_t2i_cdn_base_url(environment)
+                if environment
+                else self.config_manager.get_t2i_cdn_base_url()
+            )
+            google_fonts = (
+                self.config_manager.get_t2i_google_fonts_mirror(environment)
+                if environment
+                else self.config_manager.get_t2i_google_fonts_mirror()
+            )
+            gstatic = (
+                self.config_manager.get_t2i_gstatic_mirror(environment)
+                if environment
+                else self.config_manager.get_t2i_gstatic_mirror()
+            )
+            atri_mirror = (
+                self.config_manager.get_t2i_atri_font_mirror(environment)
+                if environment
+                else self.config_manager.get_t2i_atri_font_mirror()
+            )
+        report_language = resolve_report_language(self.config_manager)
+        common_context: TemplateResourceContext = {
+            "hide_user_names": hide_user_names,
+            "report_language": report_language,
+            "t2i_font_source": environment or self.config_manager.get_t2i_font_source(),
+            "t2i_font_mode": font_mode,
+            "t2i_google_fonts_mirror": google_fonts,
+            "t2i_gstatic_mirror": gstatic,
+            "t2i_atri_font_mirror": atri_mirror,
+            "t2i_miku_assets_mirror": f"{assets_base_url}/HatsuneMiku",
+            "t2i_deepseek_maid_assets_mirror": f"{assets_base_url}/deepseek_maid",
+            "t2i_maria_assets_mirror": f"{assets_base_url}/maria",
+            "t2i_npm_mirror": f"{cdn_base_url}/npm",
+            "cdn_assets_base": assets_base_url,
+        }
+
+        return common_context, cdn_base_url
+
+    def _render_chat_quality(
+        self,
+        review: QualityReview | dict[str, object] | None,
+        analysis_result: AnalysisResultPayload,
+        template_theme: str | None,
+        common_context: TemplateResourceContext,
+    ) -> str:
+        """独立准备聊天质量组件，并在匿名模式下净化所有评价文本。
+
+        Args:
+            review: 领域质量评价或旧版字典数据。
+            analysis_result: 包含质量评价及用户名单的领域结果。
+            template_theme: 当前报告主题。
+            common_context: 本次渲染固定的资源与展示选项。
+
+        Returns:
+            质量评价组件 HTML；没有评价时返回空字符串。
+        """
+        if not review:
+            return ""
+        review_data = review.to_dict() if isinstance(review, QualityReview) else review
+        if common_context["hide_user_names"]:
+            dimensions = review_data.get("dimensions", [])
+            review_data = {
+                **review_data,
+                "title": self.sanitize_identity_text(
+                    str(review_data.get("title", "")), analysis_result, True
+                ),
+                "subtitle": self.sanitize_identity_text(
+                    str(review_data.get("subtitle", "")), analysis_result, True
+                ),
+                "summary": self.sanitize_identity_text(
+                    str(review_data.get("summary", "")), analysis_result, True
+                ),
+                "dimensions": [
+                    {
+                        **dimension,
+                        "name": self.sanitize_identity_text(
+                            str(dimension.get("name", "")), analysis_result, True
+                        ),
+                        "comment": self.sanitize_identity_text(
+                            str(dimension.get("comment", "")), analysis_result, True
+                        ),
+                    }
+                    for dimension in (
+                        dimensions if isinstance(dimensions, list) else []
+                    )
+                    if isinstance(dimension, dict)
+                ],
+            }
+        rendered = self.html_templates.render_template(
+            "chat_quality_item.html",
+            template_theme=template_theme,
+            **review_data,
+            **common_context,
+        )
+        logger.debug(f"聊天质量锐评HTML生成完成，长度: {len(rendered)}")
+        return rendered
+
+    @staticmethod
+    def _collect_avatar_user_ids(
+        topics: Sequence[SummaryTopic],
+        user_titles: Sequence[UserTitle],
+        golden_quotes: Sequence[GoldenQuote],
+        user_analysis: Mapping[str, object] | None,
+        hide_user_names: bool,
+    ) -> set[str]:
+        """收集本次展示内容需要的头像，区分匿名贡献者及普通文本引用。
+
+        Args:
+            topics: 已按展示上限截取的话题。
+            user_titles: 已按展示上限截取的用户称号。
+            golden_quotes: 已按展示上限截取的金句。
+            user_analysis: 用于确认文本引用身份的用户活动字典。
+            hide_user_names: 是否额外渲染贡献者和称号理由中的匿名头像。
+
+        Returns:
+            去重后的头像用户 ID 集合。
+        """
+        avatar_user_ids: set[str] = set()
+        known_user_ids = {
+            str(user_id).strip()
+            for user_id in (user_analysis or {})
+            if str(user_id).strip()
+        }
+        for title in user_titles:
+            user_id = str(title.user_id or "").strip()
+            if user_id:
+                avatar_user_ids.add(user_id)
+        for golden_quote in golden_quotes:
+            user_id = str(golden_quote.user_id or "").strip()
+            if user_id:
+                avatar_user_ids.add(user_id)
+        mention_sources = []
+        for topic in topics:
+            if hide_user_names:
+                avatar_user_ids.update(
+                    str(user_id).strip()
+                    for user_id in (topic.contributor_ids or [])
+                    if str(user_id).strip()
+                )
+            mention_sources.append(str(topic.detail or ""))
+        mention_sources.extend(
+            str(golden_quote.reason or "") for golden_quote in golden_quotes
+        )
+        if hide_user_names:
+            mention_sources.extend(str(title.reason or "") for title in user_titles)
+        for source in mention_sources:
+            avatar_user_ids.update(
+                matched_user_id
+                for matched_user_id in re.findall(r"\[([A-Za-z0-9_-]{1,128})\]", source)
+                if matched_user_id in known_user_ids
+            )
+        return avatar_user_ids
+
     async def prepare_render_data(
         self,
         analysis_result: AnalysisResultPayload,
@@ -184,7 +418,10 @@ class RenderDataPreparer:
         avatar_cache_namespace: str | None = None,
         hide_user_names: bool = False,
         allow_alphanumeric_user_ids: bool = False,
-    ) -> dict[str, object]:
+        environment: str | None = None,
+        resources: RenderingResourceConfig | None = None,
+        font_mode: FontMode = "network",
+    ) -> RenderTemplateContext:
         """组装模板引擎所需的完整数据字典。
 
         Args:
@@ -196,13 +433,24 @@ class RenderDataPreparer:
             avatar_cache_namespace: 平台隔离的头像缓存命名空间。
             hide_user_names: 是否匿名化渲染（纯头像模式）。
             allow_alphanumeric_user_ids: 是否允许字母数字用户 ID 识别。
+            environment: 当前渲染方案的资源环境，省略时采用第一优先级方案。
+            resources: 当前轮次的资源地址快照，相同环境也可使用不同地址。
+            font_mode: 图片T2I的字体加载方式；独立 HTML 导出保持在线字体。
 
         Returns:
-            dict: 包含全量模板渲染变量的字典。
+            包含全量模板渲染变量的强类型上下文。
+
+        Raises:
+            KeyError: 分析结果缺少统计信息或其他必需字段。
         """
         stats = analysis_result["statistics"]
         topics = analysis_result["topics"]
         user_titles = analysis_result["user_titles"]
+        common_context, cdn_base_url = self._build_resource_context(
+            environment, resources, font_mode, hide_user_names
+        )
+        report_language = common_context["report_language"]
+
         activity_viz = stats.activity_visualization
 
         max_topics = self.config_manager.get_max_topics()
@@ -211,45 +459,15 @@ class RenderDataPreparer:
         avatar_reuse_registry: dict[str, str] = {}
         avatar_reuse_aliases: dict[str, str] = {}
 
-        avatar_user_ids: set[str] = set()
-        known_user_ids = {
-            str(user_id).strip()
-            for user_id in (user_analysis or {})
-            if str(user_id).strip()
-        }
         max_user_titles = self.config_manager.get_max_user_titles()
         max_golden_quotes = self.config_manager.get_max_golden_quotes()
-        for title in user_titles[:max_user_titles]:
-            user_id = str(title.user_id or "").strip()
-            if user_id:
-                avatar_user_ids.add(user_id)
-        for golden_quote in stats.golden_quotes[:max_golden_quotes]:
-            user_id = str(golden_quote.user_id or "").strip()
-            if user_id:
-                avatar_user_ids.add(user_id)
-        mention_sources = []
-        for topic in topics[:max_topics]:
-            if hide_user_names:
-                avatar_user_ids.update(
-                    str(user_id).strip()
-                    for user_id in (topic.contributor_ids or [])
-                    if str(user_id).strip()
-                )
-            mention_sources.append(str(topic.detail or ""))
-        mention_sources.extend(
-            str(golden_quote.reason or "")
-            for golden_quote in stats.golden_quotes[:max_golden_quotes]
+        avatar_user_ids = self._collect_avatar_user_ids(
+            topics[:max_topics],
+            user_titles[:max_user_titles],
+            stats.golden_quotes[:max_golden_quotes],
+            user_analysis,
+            hide_user_names,
         )
-        if hide_user_names:
-            mention_sources.extend(
-                str(title.reason or "") for title in user_titles[:max_user_titles]
-            )
-        for source in mention_sources:
-            avatar_user_ids.update(
-                matched_user_id
-                for matched_user_id in re.findall(r"\[([A-Za-z0-9_-]{1,128})\]", source)
-                if matched_user_id in known_user_ids
-            )
         if avatar_user_ids:
             await asyncio.gather(
                 *(
@@ -295,24 +513,6 @@ class RenderDataPreparer:
                 }
             )
 
-        assets_base_url = self.config_manager.get_template_assets_base_url()
-        report_language = resolve_report_language(self.config_manager)
-        common_context = {
-            "hide_user_names": hide_user_names,
-            "report_language": report_language,
-            "t2i_font_source": self.config_manager.get_t2i_font_source(),
-            "t2i_google_fonts_mirror": (
-                self.config_manager.get_t2i_google_fonts_mirror()
-            ),
-            "t2i_gstatic_mirror": self.config_manager.get_t2i_gstatic_mirror(),
-            "t2i_atri_font_mirror": (self.config_manager.get_t2i_atri_font_mirror()),
-            "t2i_miku_assets_mirror": f"{assets_base_url}/HatsuneMiku",
-            "t2i_deepseek_maid_assets_mirror": f"{assets_base_url}/deepseek_maid",
-            "t2i_maria_assets_mirror": f"{assets_base_url}/maria",
-            "t2i_npm_mirror": f"{self.config_manager.get_t2i_cdn_base_url()}/npm",
-            "cdn_assets_base": assets_base_url,
-        }
-
         topics_html = (
             self.html_templates.render_template(
                 "topic_item.html",
@@ -347,6 +547,7 @@ class RenderDataPreparer:
                 profile_mapping_overrides,
                 self.profile_asset_manifest,
                 self.config_manager,
+                cdn_base_url=cdn_base_url,
             )
             title_reason = title.reason
             if hide_user_names:
@@ -449,68 +650,12 @@ class RenderDataPreparer:
         )
         logger.debug(f"活跃度图表HTML生成完成，长度: {len(hourly_chart_html)}")
 
-        chat_quality_html = ""
-        chat_quality_review = analysis_result.get("chat_quality_review")
-        if not chat_quality_review:
-            chat_quality_review = stats.chat_quality_review
+        review = analysis_result.get("chat_quality_review") or stats.chat_quality_review
+        chat_quality_html = self._render_chat_quality(
+            review, analysis_result, template_theme, common_context
+        )
 
-        if chat_quality_review:
-            if hasattr(chat_quality_review, "dimensions"):
-                review_data = {
-                    "title": chat_quality_review.title,
-                    "subtitle": chat_quality_review.subtitle,
-                    "dimensions": [
-                        {
-                            "name": d.name,
-                            "percentage": d.percentage,
-                            "comment": d.comment,
-                            "color": d.color,
-                        }
-                        for d in chat_quality_review.dimensions
-                    ],
-                    "summary": chat_quality_review.summary,
-                }
-            else:
-                review_data = chat_quality_review
-
-            if hide_user_names and isinstance(review_data, dict):
-                review_data = {
-                    **review_data,
-                    "title": self.sanitize_identity_text(
-                        review_data.get("title", ""), analysis_result, True
-                    ),
-                    "subtitle": self.sanitize_identity_text(
-                        review_data.get("subtitle", ""), analysis_result, True
-                    ),
-                    "summary": self.sanitize_identity_text(
-                        review_data.get("summary", ""), analysis_result, True
-                    ),
-                    "dimensions": [
-                        {
-                            **dimension,
-                            "name": self.sanitize_identity_text(
-                                dimension.get("name", ""), analysis_result, True
-                            ),
-                            "comment": self.sanitize_identity_text(
-                                dimension.get("comment", ""),
-                                analysis_result,
-                                True,
-                            ),
-                        }
-                        for dimension in review_data.get("dimensions", [])
-                        if isinstance(dimension, dict)
-                    ],
-                }
-
-            chat_quality_html = self.html_templates.render_template(
-                "chat_quality_item.html",
-                template_theme=template_theme,
-                **review_data,
-                **common_context,
-            )
-            logger.debug(f"聊天质量锐评HTML生成完成，长度: {len(chat_quality_html)}")
-
-        render_data = {
+        render_data: RenderTemplateContext = {
             **common_context,
             "current_date": format_report_date(report_language, datetime.now()),
             "current_datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

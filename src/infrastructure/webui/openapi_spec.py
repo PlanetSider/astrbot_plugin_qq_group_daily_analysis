@@ -22,6 +22,145 @@ def generate_openapi_spec() -> dict[str, Any]:
             "description": "REST API and data contract specification for AstrBot QQ Group Daily Analysis Dashboard",
         },
         "paths": {
+            "/config": {
+                "get": {
+                    "summary": "读取插件配置、表单定义和内容版本",
+                    "operationId": "getPluginConfig",
+                    "responses": {
+                        "200": {
+                            "description": "版本对应原始配置；表单中的默认方案可能经过补齐",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"const": "ok"},
+                                            "data": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "config": {
+                                                        "type": "object",
+                                                        "additionalProperties": True,
+                                                    },
+                                                    "schema": {
+                                                        "type": "object",
+                                                        "additionalProperties": True,
+                                                    },
+                                                    "revision": {
+                                                        "type": "string",
+                                                        "pattern": "^[0-9a-f]{64}$",
+                                                    },
+                                                },
+                                                "required": [
+                                                    "config",
+                                                    "schema",
+                                                    "revision",
+                                                ],
+                                            },
+                                        },
+                                        "required": ["status", "data"],
+                                    }
+                                }
+                            },
+                        },
+                        "500": {"description": "读取配置失败"},
+                    },
+                },
+                "post": {
+                    "summary": "保存配置，带版本时拒绝覆盖过期快照",
+                    "operationId": "savePluginConfig",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "config": {
+                                            "type": "object",
+                                            "additionalProperties": True,
+                                        },
+                                        "revision": {
+                                            "type": "string",
+                                            "pattern": "^[0-9a-f]{64}$",
+                                            "description": "可选，兼容旧调用方；WebUI 应传入最近读取或保存成功的版本",
+                                        },
+                                    },
+                                    "required": ["config"],
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "配置保存成功，返回新版本供后续保存使用",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"const": "ok"},
+                                            "message": {"type": "string"},
+                                            "data": {
+                                                "type": "object",
+                                                "additionalProperties": True,
+                                            },
+                                            "revision": {
+                                                "type": "string",
+                                                "pattern": "^[0-9a-f]{64}$",
+                                            },
+                                        },
+                                        "required": ["status", "data", "revision"],
+                                    }
+                                }
+                            },
+                        },
+                        "400": {"description": "配置或版本格式无效"},
+                        "409": {
+                            "description": "配置已被其他页面或管理界面修改，须重新读取后保存"
+                        },
+                        "500": {"description": "配置保存失败"},
+                    },
+                },
+            },
+            "/config/test-t2i": {
+                "post": {
+                    "summary": "按当前渲染方案测试 AstrBot 或自定义 T2I，不生成分析报告",
+                    "operationId": "testT2i",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/T2iProbeRequest"
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "经校验的图片与耗时，不保存配置或报告",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string", "const": "ok"},
+                                            "data": {
+                                                "$ref": "#/components/schemas/T2iProbe"
+                                            },
+                                        },
+                                        "required": ["status", "data"],
+                                    }
+                                }
+                            },
+                        },
+                        "400": {"description": "服务配置无效"},
+                        "502": {"description": "服务连接、鉴权、超时或图片校验失败"},
+                        "503": {"description": "AstrBot 渲染接口尚未就绪"},
+                    },
+                },
+            },
             "/config/test-template-cdn": {
                 "post": {
                     "summary": "从插件服务器通过 HEAD 检查 GitHub 和 npm 资源链接",
@@ -354,9 +493,16 @@ def generate_openapi_spec() -> dict[str, Any]:
                 "get": {
                     "summary": "Get distinct groups list",
                     "operationId": "getDistinctGroups",
+                    "parameters": [
+                        {
+                            "name": "by_session",
+                            "in": "query",
+                            "schema": {"type": "boolean"},
+                        }
+                    ],
                     "responses": {
                         "200": {
-                            "description": "List of group IDs",
+                            "description": "历史群聊的标识、名称和平台实例",
                             "content": {
                                 "application/json": {
                                     "schema": {
@@ -365,7 +511,9 @@ def generate_openapi_spec() -> dict[str, Any]:
                                             "status": {"type": "string"},
                                             "data": {
                                                 "type": "array",
-                                                "items": {"type": "string"},
+                                                "items": {
+                                                    "$ref": "#/components/schemas/GroupItem"
+                                                },
                                             },
                                         },
                                     }
@@ -544,6 +692,73 @@ def generate_openapi_spec() -> dict[str, Any]:
                     },
                 }
             },
+            "/plugin-data/config-backups": {
+                "get": {
+                    "summary": "List configuration backups",
+                    "operationId": "getConfigBackups",
+                    "responses": {
+                        "200": {
+                            "description": "Backup list",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string"},
+                                            "data": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "items": {
+                                                        "type": "array",
+                                                        "items": {
+                                                            "$ref": "#/components/schemas/ConfigBackupInfo"
+                                                        },
+                                                    }
+                                                },
+                                                "required": ["items"],
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/plugin-data/config-backups/detail": {
+                "get": {
+                    "summary": "Read an original JSON configuration backup",
+                    "operationId": "getConfigBackup",
+                    "parameters": [
+                        {
+                            "in": "query",
+                            "name": "filename",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Backup JSON",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "status": {"type": "string"},
+                                            "data": {
+                                                "$ref": "#/components/schemas/ConfigBackupDetail"
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "400": {"description": "Invalid backup or filename"},
+                        "404": {"description": "Backup no longer exists"},
+                    },
+                }
+            },
             "/openapi.json": {
                 "get": {
                     "summary": "Get OpenAPI 3.1 specification for the plugin Web API",
@@ -561,6 +776,60 @@ def generate_openapi_spec() -> dict[str, Any]:
         },
         "components": {
             "schemas": {
+                "GroupItem": {
+                    "type": "object",
+                    "properties": {
+                        "group_id": {"type": "string", "minLength": 1},
+                        "group_name": {"type": "string"},
+                        "platform": {"type": "string"},
+                    },
+                    "required": ["group_id", "group_name", "platform"],
+                },
+                "T2iProbeRequest": {
+                    "type": "object",
+                    "properties": {
+                        "render_service": {
+                            "type": "string",
+                            "enum": ["astrbot", "custom"],
+                            "default": "custom",
+                        },
+                        "group_id": {"type": "string", "maxLength": 256},
+                        "platform_id": {"type": "string", "maxLength": 256},
+                        "service_endpoint": {
+                            "type": "string",
+                            "maxLength": 2048,
+                            "description": "自定义方案的服务地址，省略时使用 http://127.0.0.1:8999/text2img",
+                        },
+                        "service_token": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "writeOnly": True,
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "minimum": 1000,
+                            "maximum": 300000,
+                            "default": 20000,
+                        },
+                        "request_timeout": {
+                            "type": "integer",
+                            "minimum": 1000,
+                            "maximum": 300000,
+                            "description": "自定义方案的请求等待上限，省略时为 40000 毫秒",
+                        },
+                    },
+                },
+                "T2iProbe": {
+                    "type": "object",
+                    "properties": {
+                        "image_data_url": {
+                            "type": "string",
+                            "pattern": "^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$",
+                        },
+                        "elapsed_ms": {"type": "number", "minimum": 0},
+                    },
+                    "required": ["image_data_url", "elapsed_ms"],
+                },
                 "TemplateCdnProbeRequest": {
                     "type": "object",
                     "properties": {"base_url": {"type": "string", "maxLength": 2048}},
@@ -633,11 +902,11 @@ def generate_openapi_spec() -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "id": {"type": "string"},
-                        "name": {"type": "string"},
+                        "display_name": {"type": "string"},
                         "type": {"type": "string"},
                         "label": {"type": "string"},
                     },
-                    "required": ["id", "name", "type", "label"],
+                    "required": ["id", "display_name", "type", "label"],
                 },
                 "TraceSpan": {
                     "type": "object",
@@ -1011,6 +1280,54 @@ def generate_openapi_spec() -> dict[str, Any]:
                         },
                     },
                     "required": ["items", "total", "available_tags"],
+                },
+                "ConfigBackupInfo": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string"},
+                        "size_bytes": {"type": "integer"},
+                        "kind": {
+                            "type": "string",
+                            "enum": ["upgrade", "comic_migration", "other"],
+                        },
+                        "plugin_version": {"type": "string", "nullable": True},
+                        "saved_at": {"type": "string", "nullable": True},
+                        "error": {"type": "string", "nullable": True},
+                    },
+                    "required": [
+                        "filename",
+                        "size_bytes",
+                        "kind",
+                        "plugin_version",
+                        "saved_at",
+                        "error",
+                    ],
+                },
+                "ConfigBackupDetail": {
+                    "type": "object",
+                    "properties": {
+                        "backup": {"$ref": "#/components/schemas/ConfigBackupInfo"},
+                        "content": {"$ref": "#/components/schemas/BackupJsonValue"},
+                    },
+                    "required": ["backup", "content"],
+                },
+                "BackupJsonValue": {
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "number"},
+                        {"type": "boolean"},
+                        {"type": "null"},
+                        {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/BackupJsonValue"},
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": {
+                                "$ref": "#/components/schemas/BackupJsonValue"
+                            },
+                        },
+                    ],
                 },
                 "SectionStats": {
                     "type": "object",

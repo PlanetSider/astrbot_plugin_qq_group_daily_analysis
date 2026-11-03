@@ -457,7 +457,7 @@ class AutoScheduler:
             # 解析可读群名以生成语义化的 TraceID
             group_name = await self._get_group_name_safe(group_id, target_platform_id)
             trace_id = TraceContext.generate(prefix="group", group_name=group_name)
-            trace = TraceContext.set(
+            trace = await TraceContext.set_async(
                 trace_id=trace_id,
                 group_id=group_id,
                 group_name=group_name,
@@ -481,7 +481,8 @@ class AutoScheduler:
             if not self.bot_manager.is_ready_for_auto_analysis():
                 logger.warning(f"群 {group_id} 自动分析跳过：bot管理器未就绪")
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.SKIP,
                         error_message=AUTO_ANALYSIS_SKIP_REASONS["bot_not_ready"],
                     )
@@ -504,7 +505,8 @@ class AutoScheduler:
                 is_skip = reason in AUTO_ANALYSIS_SKIP_REASONS
                 if trace and trace.status == "running":
                     if is_skip:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.SKIP,
                             error_message=skip_msg
                             or AUTO_ANALYSIS_SKIP_REASONS.get(
@@ -512,7 +514,8 @@ class AutoScheduler:
                             ),
                         )
                     else:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.FAIL,
                             error_message=str(
                                 result.get("error") or f"自动分析执行失败: {reason}"
@@ -565,8 +568,10 @@ class AutoScheduler:
                 result["reason"] = "report_delivery_disabled"
             if not delivery_completed:
                 if trace and trace.status == "running":
-                    trace.finish(
-                        event=TaskEvent.FAIL, error_message="Report delivery failed"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.FAIL,
+                        error_message="Report delivery failed",
                     )
                 result["success"] = False
                 result["reason"] = "report_delivery_failed"
@@ -574,7 +579,7 @@ class AutoScheduler:
                 return result
 
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.SUCCEED)
+                (await asyncio.to_thread(trace.finish, event=TaskEvent.SUCCEED))
             if delivery_disabled:
                 logger.info(f"群 {group_id} 自动分析完成，按总结投递配置跳过发送")
             else:
@@ -583,14 +588,18 @@ class AutoScheduler:
 
         except DuplicateGroupTaskError:
             if trace and trace.status == "running":
-                trace.finish(
-                    event=TaskEvent.ABORT, error_message="Task already running in group"
+                await asyncio.to_thread(
+                    trace.finish,
+                    event=TaskEvent.ABORT,
+                    error_message="Task already running in group",
                 )
             logger.debug(f"群 {group_id} 任务因并发锁冲突而跳过（已在运行）")
             raise
         except Exception as e:
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.FAIL, error_message=str(e))
+                await asyncio.to_thread(
+                    trace.finish, event=TaskEvent.FAIL, error_message=str(e)
+                )
             logger.error(f"群 {group_id} 自动分析执行失败: {e}", exc_info=True)
             return {
                 "success": False,
@@ -780,7 +789,7 @@ class AutoScheduler:
             # 解析可读群名以生成语义化的 TraceID
             group_name = await self._get_group_name_safe(group_id, target_platform_id)
             trace_id = TraceContext.generate(prefix="incr", group_name=group_name)
-            trace = TraceContext.set(
+            trace = await TraceContext.set_async(
                 trace_id=trace_id,
                 group_id=group_id,
                 group_name=group_name,
@@ -800,7 +809,8 @@ class AutoScheduler:
             if not self.bot_manager.is_ready_for_auto_analysis():
                 logger.warning(f"群 {group_id} 增量分析跳过：bot管理器未就绪")
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.SKIP,
                         error_message=AUTO_ANALYSIS_SKIP_REASONS["bot_not_ready"],
                     )
@@ -819,7 +829,8 @@ class AutoScheduler:
                 is_skip = reason in AUTO_ANALYSIS_SKIP_REASONS
                 if trace and trace.status == "running":
                     if is_skip:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.SKIP,
                             error_message=skip_msg
                             or AUTO_ANALYSIS_SKIP_REASONS.get(
@@ -827,7 +838,8 @@ class AutoScheduler:
                             ),
                         )
                     else:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.FAIL,
                             error_message=str(
                                 result.get("error") or f"增量分析失败: {reason}"
@@ -848,19 +860,23 @@ class AutoScheduler:
                 f"金句={batch_summary.get('quotes_count', 0)}"
             )
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.SUCCEED)
+                (await asyncio.to_thread(trace.finish, event=TaskEvent.SUCCEED))
             return result
 
         except DuplicateGroupTaskError:
             if trace and trace.status == "running":
-                trace.finish(
-                    event=TaskEvent.ABORT, error_message="Task already running in group"
+                await asyncio.to_thread(
+                    trace.finish,
+                    event=TaskEvent.ABORT,
+                    error_message="Task already running in group",
                 )
             logger.debug(f"群 {group_id} 增量分析因并发锁冲突而跳过（已在运行）")
             return {"success": False, "reason": "already_running"}
         except Exception as e:
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.FAIL, error_message=str(e))
+                await asyncio.to_thread(
+                    trace.finish, event=TaskEvent.FAIL, error_message=str(e)
+                )
             logger.error(f"群 {group_id} 增量分析执行失败: {e}", exc_info=True)
             return {"success": False, "reason": str(e)}
         finally:
@@ -962,7 +978,7 @@ class AutoScheduler:
             # 解析可读群名以生成语义化的 TraceID
             group_name = await self._get_group_name_safe(group_id, target_platform_id)
             trace_id = TraceContext.generate(prefix="report", group_name=group_name)
-            trace = TraceContext.set(
+            trace = await TraceContext.set_async(
                 trace_id=trace_id,
                 group_id=group_id,
                 group_name=group_name,
@@ -988,7 +1004,8 @@ class AutoScheduler:
             ):
                 logger.info(f"群 {group_id} 已移出增量名单，跳过最终报告")
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.SKIP,
                         error_message=AUTO_ANALYSIS_SKIP_REASONS["target_removed"],
                     )
@@ -1008,7 +1025,8 @@ class AutoScheduler:
             if not self.bot_manager.is_ready_for_auto_analysis():
                 logger.warning(f"群 {group_id} 最终报告跳过：bot管理器未就绪")
                 if trace and trace.status == "running":
-                    trace.finish(
+                    await asyncio.to_thread(
+                        trace.finish,
                         event=TaskEvent.SKIP,
                         error_message=AUTO_ANALYSIS_SKIP_REASONS["bot_not_ready"],
                     )
@@ -1031,7 +1049,8 @@ class AutoScheduler:
                 is_skip = reason in AUTO_ANALYSIS_SKIP_REASONS
                 if trace and trace.status == "running":
                     if is_skip:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.SKIP,
                             error_message=skip_msg
                             or AUTO_ANALYSIS_SKIP_REASONS.get(
@@ -1039,7 +1058,8 @@ class AutoScheduler:
                             ),
                         )
                     else:
-                        trace.finish(
+                        await asyncio.to_thread(
+                            trace.finish,
                             event=TaskEvent.FAIL,
                             error_message=str(
                                 result.get("error") or f"增量最终报告失败: {reason}"
@@ -1104,8 +1124,10 @@ class AutoScheduler:
                 result["reason"] = "report_delivery_disabled"
             if not delivery_completed:
                 if trace and trace.status == "running":
-                    trace.finish(
-                        event=TaskEvent.FAIL, error_message="Report delivery failed"
+                    await asyncio.to_thread(
+                        trace.finish,
+                        event=TaskEvent.FAIL,
+                        error_message="Report delivery failed",
                     )
                 result["success"] = False
                 result["reason"] = "report_delivery_failed"
@@ -1131,7 +1153,7 @@ class AutoScheduler:
                 )
 
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.SUCCEED)
+                (await asyncio.to_thread(trace.finish, event=TaskEvent.SUCCEED))
             if delivery_disabled:
                 logger.info(f"群 {group_id} 增量最终报告分析完成，已按配置跳过投递")
             else:
@@ -1140,8 +1162,10 @@ class AutoScheduler:
 
         except DuplicateGroupTaskError:
             if trace and trace.status == "running":
-                trace.finish(
-                    event=TaskEvent.ABORT, error_message="Task already running in group"
+                await asyncio.to_thread(
+                    trace.finish,
+                    event=TaskEvent.ABORT,
+                    error_message="Task already running in group",
                 )
             logger.debug(f"群 {group_id} 最终报告因并发锁冲突而跳过（已在运行）")
             return {
@@ -1152,7 +1176,9 @@ class AutoScheduler:
             }
         except Exception as e:
             if trace and trace.status == "running":
-                trace.finish(event=TaskEvent.FAIL, error_message=str(e))
+                await asyncio.to_thread(
+                    trace.finish, event=TaskEvent.FAIL, error_message=str(e)
+                )
             logger.error(f"群 {group_id} 最终报告执行失败: {e}", exc_info=True)
             return {
                 "success": False,

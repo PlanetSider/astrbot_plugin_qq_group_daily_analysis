@@ -296,7 +296,7 @@ async def test_reaper_loop_reaps_timed_out_tasks(temp_db: Path):
 
     # 启动 reaper (极短 interval 用于测试)
     manager.start_reaper(interval_seconds=0.01, timeout_seconds=180)
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(asyncio.gather(hung_task, return_exceptions=True), 3)
     manager.stop_reaper()
 
     # 验证活跃列表已清理
@@ -1083,3 +1083,49 @@ async def test_render_report_span_reports_correct_template_theme(tmp_path: Path)
     ]
     assert len(html_spans) == 1
     assert html_spans[0]["payload"]["template"] == "gda_miku_dream"
+
+
+def test_group_sessions_keep_same_id_separate_and_names_within_platform(temp_db: Path):
+    store = TraceSQLiteStore(temp_db)
+    for trace_id, platform, name, started in [
+        ("a1", "onebot_1", "群一", 1),
+        ("a2", "onebot_1", "未知群", 2),
+        ("b1", "onebot_2", "群二", 3),
+    ]:
+        store.save_trace(
+            {
+                "trace_id": trace_id,
+                "group_id": "123",
+                "group_name": name,
+                "platform": platform,
+                "status": "running",
+                "started_at": started,
+            }
+        )
+    assert store.get_distinct_groups() == [
+        {"group_id": "123", "group_name": "群二", "platform": "onebot_2"}
+    ]
+    assert store.get_distinct_groups(by_session=True) == [
+        {"group_id": "123", "group_name": "群二", "platform": "onebot_2"},
+        {"group_id": "123", "group_name": "群一", "platform": "onebot_1"},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected"), [({}, False), ({"by_session": "true"}, True)]
+)
+async def test_group_route_forwards_session_query(monkeypatch, query, expected):
+    from types import SimpleNamespace
+
+    from src.infrastructure.webui.routes import trace_routes
+
+    store = MagicMock()
+    store.get_distinct_groups.return_value = []
+    monkeypatch.setattr(trace_routes, "request", SimpleNamespace(query=query))
+    monkeypatch.setattr(trace_routes, "json_response", lambda data: data)
+    route = trace_routes.TraceRoutes(
+        context=MagicMock(), trace_store=store, active_task_manager=MagicMock()
+    )
+    assert (await route.api_get_distinct_groups())["status"] == "ok"
+    store.get_distinct_groups.assert_called_once_with(by_session=expected)
