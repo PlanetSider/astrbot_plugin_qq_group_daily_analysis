@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from PIL import Image
 
-from src.infrastructure.reporting import generators
+from src.infrastructure.reporting import generators, image_rendering
 from src.infrastructure.reporting.generators import ReportGenerator
 from src.infrastructure.reporting.html_renderer import bind_group_html_renderer
 from src.infrastructure.reporting.render_diagnostics import (
@@ -118,10 +118,11 @@ def render_setup(monkeypatch):
     ]
     generator.html_templates = MagicMock()
     generator.html_templates.render_template.return_value = "<html>report</html>"
-    generator._prepare_render_data = AsyncMock(return_value={})
+    generator.prepare_render_data = AsyncMock(return_value={})
     generator._render_semaphore = asyncio.Semaphore(1)
     log = MagicMock()
     monkeypatch.setattr(generators, "logger", log)
+    monkeypatch.setattr(image_rendering, "logger", log)
     return generator, log
 
 

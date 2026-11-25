@@ -2,11 +2,11 @@
 
 # 群聊日常分析插件
 
-[![Plugin Version](https://img.shields.io/badge/当前版本-v5.9.3.1-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
+[![Plugin Version](https://img.shields.io/badge/当前版本-v6.0.4.1-blue.svg?style=for-the-badge&color=76bad9)](https://github.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/tree/feature/serverchan-summary-routing)
 [![AstrBot](https://img.shields.io/badge/AstrBot-自用插件源-ff69b4?style=for-the-badge)](https://raw.githubusercontent.com/PlanetSider/astrbot_plugin_qq_group_daily_analysis/feature/serverchan-summary-routing/astrbot-plugins.json)
 [![AstrBot Version](https://img.shields.io/badge/AstrBot-%3E%3D4.24.1-orange.svg?style=for-the-badge)](https://github.com/AstrBotDevs/AstrBot)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
-[![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-AI_知识库-1877F2?style=for-the-badge&logo=data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAgACADASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAAYHCP/EACIQAAEDBAIDAQEAAAAAAAAAAAECAwQABQYHERIxMkFxCP/EABcBAQEBAQAAAAAAAAAAAAAAAAABAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwDkylK2r+f9b64zbDckn5fmaLJdYZ6Q2lzWY6UApBS6oOe4Kz148D9IroyxWlW+w9UZ5gFot91yqyiFEnqLbLiJLboC+CequhPBIBI8gj78qIqhW1aA2LrTC8NySDmWGt3u6yz3hOrgtSErSEgJZUV+gCx258H9AFYrSoLjYm2M72BaLfacqvKJkSAouNNtxm2QV8EdldAOSASkeAB8+1D0pVH/2Q==)](https://deepwiki.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask_DeepWiki-有疑问点这里-1877F2?style=for-the-badge&logo=data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAAgACADASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAAYHCP/EACIQAAEDBAIDAQEAAAAAAAAAAAECAwQABQYHERIxMkFxCP/EABcBAQEBAQAAAAAAAAAAAAAAAAABAgP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwDkylK2r+f9b64zbDckn5fmaLJdYZ6Q2lzWY6UApBS6oOe4Kz148D9IroyxWlW+w9UZ5gFot91yqyiFEnqLbLiJLboC+CequhPBIBI8gj78qIqhW1aA2LrTC8NySDmWGt3u6yz3hOrgtSErSEgJZUV+gCx258H9AFYrSoLjYm2M72BaLfacqvKJkSAouNNtxm2QV8EdldAOSASkeAB8+1D0pVH/2Q==)](https://deepwiki.com/SXP-Simon/astrbot_plugin_qq_group_daily_analysis)
 
 <table align="center" style="border: none;">
   <tr>
@@ -23,7 +23,7 @@
   </tr>
 </table>
 
-_✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [NapNeko/NapCatQQ<img src="https://avatars.githubusercontent.com/u/165024194?s=200&v=4" width="14px" >](https://napneko.github.io/), [LLOneBot/LuckyLilliaBot<img src="https://avatars.githubusercontent.com/u/161472069?s=200&v=4" width="14px" >](https://www.llonebot.com/), [SnowLuma/SnowLuma<img src="https://avatars.githubusercontent.com/u/216149176?s=200&v=4" width="14px" >](https://snowluma.github.io/))、**QQ 官方机器人**、**Telegram**、**Discord**，未来支持更多平台。 ✨_
+_✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **QQ 官方机器人**、**Telegram**、**Discord**、**OneBot v11**、**Satori**，未来支持更多平台。 ✨_
 
 <img src="https://count.getloli.com/@astrbot-qq-group-daily-analysis?name=astrbot-qq-group-daily-analysis&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </div>
@@ -45,6 +45,8 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 - [大模型原生函数调用 (LLM Tools)](#大模型原生函数调用-llm-tools)
 - [平台支持与要求](#平台支持与要求)
 - [增量分析模式](#增量分析模式-beta)
+- [图片报告与 Typst 本地渲染](#图片报告与-typst-本地渲染)
+- [数据与资源管理](#数据与资源管理)
 - [HTML报告与自建外链](#HTML-报告与自建外链)
 - [人格设定 (Persona)](#人格设定-Persona)
 
@@ -88,12 +90,36 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="100%" valign="top">
-      <img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.webp" alt="群每日漫画功能" width="60%">
-      <p><b>参考 Atri 人格的群每日漫画 Demo</b></p>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>SCP 异常调查档案风</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/scp_dossier/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/scp_dossier/thumbnail.webp" alt="SCP 异常调查档案风群漫画示例" width="100%"></a>
+    </td>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>像素 RPG 每日冒险日志</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/pixel_rpg/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/pixel_rpg/thumbnail.webp" alt="像素 RPG 每日冒险日志群漫画示例" width="100%"></a>
+    </td>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>复古昭和怪谈画报风</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/showa_kidan/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/showa_kidan/thumbnail.webp" alt="复古昭和怪谈画报风群漫画示例" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>浮世绘锦绘町人见闻录</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/ukiyo_e/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/ukiyo_e/thumbnail.webp" alt="浮世绘锦绘町人见闻录群漫画示例" width="100%"></a>
+    </td>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>怪盗团预告信剪报拼贴</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/phantom_thief/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/phantom_thief/thumbnail.webp" alt="怪盗团预告信剪报拼贴群漫画示例" width="100%"></a>
+    </td>
+    <td align="center" width="33.3%" valign="top">
+      <p><b>手账剪贴簿拍立得日记</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/scrapbook_diary/preview.webp"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic_previews/scrapbook_diary/thumbnail.webp" alt="手账剪贴簿拍立得日记群漫画示例" width="100%"></a>
     </td>
   </tr>
 </table>
+
+点击样图查看大图。更多风格见[每日群漫画配置](#每日群漫画配置)，也可以查看 [ATRI 人格漫画示例](https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/assets/comic-demo.webp)。
 
 ## 功能特色
 
@@ -108,62 +134,86 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 
 ### 🎛️ WebUI 控制台
 
-- **内嵌管理面板**: 原生集成在 AstrBot 插件管理页面，无需额外部署，集中提供运行总览、分析记录、统计与消耗、历史报告、运行日志与配置中心六大板块
+- **内嵌管理面板**: 原生集成在 AstrBot 插件管理页面，无需额外部署，集中提供总览、分析记录、统计、报告、日志、配置与数据七个页面
 - **插件配置中心**: 内置专属可视化配置界面，提供 12 个功能分组导航与即时搜索；支持已有人格与大模型服务商下拉点选、漫画参考图本地上传与灯箱预览，修改保存即时生效
 - **趋势分析与消耗看板**: 支持近48小时、近7天、近14天、近30天等不同时间跨度切换，直观呈现 API 请求走势、大模型 Tokens 消耗堆叠图与服务商消耗占比环形饼图
-- **报告浏览与主题重绘**: 历史报告支持长图与 HTML 在线预览及一键下载；支持切换视觉主题（手账、亚托莉、蔚蓝档案、初音未来、黑客赛博、复古像素、极简等）重新生成报告，直接复用已有数据，0 Token 成本
-- **时序事件时间线**: 在统计与消耗页面提供连续水平时间轴，支持鼠标拖拽平移与快速回溯历史样本，直观查看各群聊的消息清洗留存与模块消耗
-- **全流程可观测性与实时监控**: 运行中任务状态与步骤实时同步感知；任务详情中完整记录各分析阶段耗时、大模型 Prompt 审计、调用与渲染重试/降级链路，故障原因一目了然
+- **报告浏览与主题重绘**: 历史报告支持长图与 HTML 在线预览及一键下载。图片可拖动查看，使用滚轮或双指缩放，也可选择原始尺寸；支持切换视觉主题（手账、亚托莉、蔚蓝档案、初音未来、黑客赛博、复古像素、极简等）重新生成报告，直接复用已有数据，0 Token 成本
+- **时序事件时间线**: 在「统计」页面提供连续水平时间轴，支持鼠标拖拽平移与快速回溯历史样本，直观查看各群聊的消息清洗留存与模块消耗
+- **全流程可观测性与实时监控**: 运行中任务状态与步骤实时同步感知；任务详情按父子阶段展示分析、素材准备、排队、编译和发送过程，保留重试与恢复原因；Typst 可分别查看编译子进程内存、CPU 耗时与宿主内存净变化
+- **任务停止与断点续跑**: 群内手动分析沿用 AstrBot 内置 `stop`，WebUI 任务可在「总览」中止；续跑有有效快照的任务时复用已有分析，重复续跑也继承原任务数据与分析日期
+- **字体、素材与存储管理**: 可从 Typst 方案直达字体或素材管理，按主题补齐、上传及替换；报告文件支持搜索、类型筛选与多选删除，自定义模板按实际目录选择管理，详见[数据与资源管理](#数据与资源管理)
 - **任务与报告双向关联**: 在任务详情中可直接查看对应产生的所有报告文件；从历史报告中点击任务编号，可快速跳转到该次任务的执行明细与日志
 - **异常任务自动清理**: AstrBot 重启时自动标记并清理未正常结束的中断任务，不留烂尾
+
+部分截图使用示例数据。
 
 <table align="center" width="100%">
   <tr>
     <td align="center" width="50%" valign="top">
-      <p><b>运行总览</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/overview.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/overview.png" alt="运行总览" width="100%"></a>
+      <p><b>总览</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/overview-20261108-b3eb04579d.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/overview-20261108-b3eb04579d.png" alt="总览" width="100%"></a>
     </td>
     <td align="center" width="50%" valign="top">
-      <p><b>配置中心</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/conf.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/conf.png" alt="配置中心" width="100%"></a>
+      <p><b>配置与校验</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/config-20261108-3d36f42581.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/config-20261108-3d36f42581.png" alt="配置与校验" width="100%"></a>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%" valign="top">
       <p><b>分析记录</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/session_history.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/session_history.png" alt="分析记录" width="100%"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/traces-20261108-de3b7d2ba0.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/traces-20261108-de3b7d2ba0.png" alt="分析记录" width="100%"></a>
     </td>
     <td align="center" width="50%" valign="top">
-      <p><b>历史报告列表</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/history_report.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/history_report.png" alt="历史报告列表" width="100%"></a>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%" valign="top">
-      <p><b>任务执行详情与断点续跑</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/resume.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/resume.png" alt="任务执行详情与断点续跑" width="100%"></a>
-    </td>
-    <td align="center" width="50%" valign="top">
-      <p><b>任务执行详情（子模块状态与异常诊断）</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/session.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/session.png" alt="子模块状态与异常诊断" width="100%"></a>
+      <p><b>报告与重绘</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/reports-20261108-29096c774f.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/reports-20261108-29096c774f.png" alt="报告与重绘" width="100%"></a>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%" valign="top">
       <p><b>统计与消耗</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/analysis.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/analysis.png" alt="统计与消耗" width="100%"></a>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/statistics-20261108-1ab5371b6c.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/statistics-20261108-1ab5371b6c.jpg" alt="统计与消耗" width="100%"></a>
     </td>
     <td align="center" width="50%" valign="top">
-      <p><b>运行日志</b></p>
-      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/runtime_logger.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/runtime_logger.png" alt="运行日志" width="100%"></a>
+      <p><b>日志</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/logs-20261108-8ce3608813.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/logs-20261108-8ce3608813.png" alt="日志" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <p><b>任务阶段与渲染回退</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/task-diagnosis-20261108-c6b0ca7c4a.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/task-diagnosis-20261108-c6b0ca7c4a.jpg" alt="任务阶段与渲染回退" width="100%"></a>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <p><b>继续分析</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/resume-20261108-ee6a4545b4.jpg"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/resume-20261108-ee6a4545b4.jpg" alt="继续分析" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <p><b>数据与阶段快照</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/data-checkpoints-20261108-299de32635.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/data-checkpoints-20261108-299de32635.png" alt="数据与阶段快照" width="100%"></a>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <p><b>Typst 字体管理</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/typst-fonts-20261108-2d0a6ff65f.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/typst-fonts-20261108-2d0a6ff65f.png" alt="Typst 字体管理" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <p><b>报告模板画廊</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/template-gallery-20261108-9440eea52d.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/template-gallery-20261108-9440eea52d.png" alt="报告模板画廊" width="100%"></a>
+    </td>
+    <td align="center" width="50%" valign="top">
+      <p><b>报告文件管理</b></p>
+      <a href="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/report-file-management-20261108-14aca297cb.png"><img src="https://cdn.jsdmirror.com/gh/SXP-Simon/profile_assets@main/plugin/webui/report-file-management-20261108-14aca297cb.png" alt="报告文件管理" width="100%"></a>
     </td>
   </tr>
 </table>
 
 ### 📊 可视化报告
 
-- **多种格式**: 支持图片和文本输出格式
-  - **精美图片**: 生成美观的可视化报告
+- **多种格式**: 支持图片、文本与 HTML 输出格式
+  - **精美图片**: 可通过 AstrBot T2I、自定义 T2I 服务或插件独立 Typst 引擎生成报告长图；Typst 无需浏览器，支持内置主题，详见[启用方法](#图片报告与-typst-本地渲染)
   - **HTML报告**: 生成清晰的HTML格式分析报告，可以进一步配置为外链形式发送
   - **QQ群**: 支持上传到群相册和群文件，查阅黑历史友好
 - **详细数据**: 包含消息统计、时间分布、关键词、金句等
@@ -179,6 +229,7 @@ _✨ 一个基于 AstrBot 的智能群聊分析插件，支持 **OneBot** ( [Nap
 | 定时分析名单模式 + 列表 | 控制哪些群参与定时任务（报告时间点触发）。                  | 可选 `inherit` 继承基础群权限；`whitelist + 空列表` 表示不注册定时任务           |
 | 增量分析名单模式 + 列表 | 控制哪些群走增量模式，其他群走传统全量。                    | 可选 `inherit` 继承定时分析最终名单；`whitelist + 空列表` 表示不启用增量周期任务 |
 | 每日群漫画              | 分析结果完成后并行生成漫画，也可用 `/群漫画` 单独生成。     | `enable_daily_comic` 是总开关，`enable_auto_daily_comic` 控制分析后自动联动      |
+| 图片渲染方案            | 在「图片渲染策略」添加 AstrBot、自定义 T2I 或 Typst 方案。 | 优先级越小越先尝试；已有配置不会自动切换为 Typst，参见[本地渲染说明](#图片报告与-typst-本地渲染) |
 | HTML 格式 (自建)        | 配置 `html_base_url` 后，机器人会发送可直接点击的报告外链。 | 输出格式需设为 html                                                              |
 | 自定义 LLM 服务         | 用户可自行选取个人提供的服务商。                            | 留空则回退到默认服务商                                                           |
 
@@ -281,6 +332,14 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 
 ## 每日群漫画配置
 
+在「配置 → 每日群漫画 → 漫画风格方案」选用经典、像素 RPG、手账等 14 种内置风格。固定模式使用列表第一套已启用的方案。想改写时可复制内置提示词，点正文旁的「恢复默认」即可重新使用当前风格的原版。也可以添加方案并选择「自定义风格」，填写自己的名称和完整分镜提示词，再保存配置。已保存的自定义方案会按名称出现在「风格来源」中，选中即可复制到另一条方案。新增多条方案后，可开启顺序、随机或洗牌轮换；轮换进度可由所有群共享，也可以按机器人实例与群聊独立保存。
+
+在「数据 → 存储分区明细与管理 → 漫画样图缓存」可按风格预览、下载、重新获取或清理样图。生成成品可在「历史报告」按「群漫画」筛选。漫画配置中的「查看轮换进度」可查看上次选用的风格，并重置共享、单群或全部轮换进度。
+
+原有的角色人格与参考图继续在「漫画角色方案」设置。已有角色专属正文会继续使用，清空后就跟随风格方案。管理员可用 `/查看漫画风格` 浏览分镜样图，或带上风格序号、名称或 ID 直接打开指定风格。Telegram 和 QQ 官方机器人支持上一张、下一张，OneBot 使用分页合并转发。实际使用的风格在「漫画风格方案」配置，浏览样图不会修改配置或推进轮换。
+
+内置分镜与样图来自 [@凉雨](https://github.com/Liangyu-G)。
+
 每日群漫画不按自然日限流：每次成功得到群分析结果时都会尝试生成一张。手动群分析、定时传统分析、定时增量最终报告，以及开启“增量分析立即报告”后的即时增量最终报告都适用。同一群已有漫画在排队或生成时，新请求会直接跳过，避免重复出图；不同群仍受漫画并发配置限制。
 
 也可以使用 `/群漫画 [天数]` 单独生成漫画。这个命令只拉取消息、提取话题并启动漫画生成，不会生成日报、称号、金句、聊天质量，也不会写入日报历史。
@@ -322,6 +381,8 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 分析结果完成后，自动联动漫画会立即在后台运行，报告渲染与发送不会等待出图完成。反过来，报告发送失败也不会取消已经开始的漫画任务。自动联动只复用报告中的有效话题总结，因此需要开启话题分析；话题功能关闭、话题 LLM 无结果或标题为空时会跳过本次自动漫画。手动 `/群漫画` 则会独立提取话题，不依赖报告功能开关。
 
 ### 分析黑白名单配置说明（小白能懂）
+
+同一个 AstrBot 接入多个机器人时，名单只填群号会匹配这些机器人下的同号群。只想让其中一个机器人分析，请在对应群聊中通过 AstrBot 的 `/sid` 获取完整 UMO（命令前缀跟随宿主配置），将它填入名单，例如 `bot_a:GroupMessage:123456`。两个接入都启用时，会分别分析并消耗 Token；插件不会跨接入合并它们的分析数据。
 
 下面只讲“在面板里怎么点”。
 
@@ -410,6 +471,24 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 > 2.  回退到主 LLM provider_id
 > 3.  回退到当前会话的 Provider (UMO)
 > 4.  回退到第一个可用的 Provider
+>
+> 主 LLM Provider 留空时，调用失败会继续按顺序尝试 **对应会话配置中的 AstrBot 回退对话模型**；无会话时使用默认配置。每个模型沿用插件的重试次数，成功后停止切换。专用模型失败时，先沿用上述默认模型回退，再尝试宿主回退列表。显式配置主 LLM 或通过 WebUI 指定临时模型时，不追加宿主回退列表。
+
+在插件 WebUI「**配置 → LLM 设置 → AstrBot 模型继承**」可集中查看宿主当前主模型、回退模型顺序，以及默认分析、话题、称号、金句、聊天质量和漫画分镜的调用顺序。「查看范围」支持宿主默认配置与已有分析记录中的群会话，并区分机器人实例；它只切换展示范围，不改变任务目标。已删除或未加载的备用模型会标记为不可用并跳过。
+
+修改下方插件模型设置时，调用顺序会同步显示为「未保存的预览」，保存后才生效。「刷新宿主信息」只重新读取宿主，不覆盖插件草稿。该面板不调用模型、不检测余额，也不展示密钥或修改 AstrBot Provider 配置；需要调整宿主主模型或备用顺序时，仍在 AstrBot 对应配置中修改，再回来刷新。
+
+### 分析运行状态
+
+在插件 WebUI「**总览 → 分析运行状态**」查看实际分析耗时与当前模型熔断情况。运行状态区按完成时间倒序展示最近 5 次成功分析的耗时。
+
+- **实际耗时**：沿用已保存的完整任务耗时（包含分析、渲染与发送），最新一次会突出显示，不足 5 次则展示已有记录。统计成功完成的任务（含警告），排除失败、取消、运行中和缺少完成时间或有效耗时的记录。没有数据时显示“暂无记录”。
+- **熔断状态**：按 Provider 展示未熔断、失败累积、冷却中、等待恢复尝试或恢复尝试中，同时显示失败计数与阈值。剩余冷却时间是读取时的快照；时间到期不代表已经恢复，由下一次实际请求尝试恢复。
+- **调整配置**：点击「并发限流设置」或「LLM 设置」直接进入对应配置分组，调整分析并发数、模型与重试策略；不会自动修改或保存配置。宿主模型继承说明继续保留在「配置 → LLM 设置」。
+
+熔断按调用尝试计数（包含重试），已识别的内容风控、格式参数兼容错误与主动取消不计入。它只覆盖分析 LLM（含漫画分镜），不覆盖实际生图；排队请求在取得并发槽位后会复查熔断状态；恢复时仅允许一个探测，其余请求按已有回退规则切换模型。已发出的请求不会强制中断，迟到结果不会干扰新一轮恢复。状态在插件内按模型共享，重启后重置；没有运行记录不代表上游健康。页面刷新只读取状态，不会探测模型或解除熔断。任务结束时随总览更新，也可点击页面上方“刷新数据”。
+
+熔断拒绝会立即跳过当前模型的剩余重试和退避等待，继续既有备用队列；全部模型不可用时结束当前调用。恢复探测被取消或遇到不计数异常时会释放资格，后续请求可以继续探测。在「分析记录 → 详情 → 大模型调用与重试链路」可查看“已跳过”及具体原因，跳过记录不会显示为已经发出的上游请求。
 
 ## 使用方法
 
@@ -424,6 +503,8 @@ C2C 使用 AstrBot 的 `FriendMessage` 主动发送能力。频道私聊先用�
 - 分析群聊近期活动
 - 天数可选，默认为1天
 - 例如：`/群分析 3` 分析最近3天的群聊
+
+手动分析进行中，可在同一会话发送 AstrBot 内置的 `/stop`（前缀跟随 AstrBot 配置，如 `*stop`）。插件通过宿主后台任务登记和共享停止信号取消关联的分析、渲染和后续发送，不额外注册 `stop` 命令，也不覆盖宿主 Agent 的停止回调。启用群内用户会话隔离时，需要由原发起人在同一机器人实例下发送。不提供后台任务登记的旧版宿主依赖内置 `stop` 写入前台事件停止标记；如果旧版第三方 Agent 只终止事件传播，需要升级宿主。WebUI 或定时任务请在任务面板中止。
 
 #### 群漫画
 
@@ -517,7 +598,7 @@ AI:     (自动调用 group_daily_analysis_trigger)
 
 | 平台              | 适配器类型                         | 驱动与方言支持                                                                                                                   | 特殊要求/说明                                                                                                                                                        |
 | ----------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **QQ (OneBot)**   | OneBot v11 / v12                   | **方言驱动架构**：内置 NapCat、LLOneBot (LuckyLilliaBot)、SnowLuma、Standard (go-cqhttp / Lagrange / onebots / WeChatBridge) 驱动 | 插件通过 `get_version_info` / `get_version` 自动探测并动态绑定最佳方言驱动；支持多端群相册、群文件多级解包、协议端真实头像与全链路观测日志。                       |
+| **QQ (OneBot)**   | OneBot v11 / v12                   | **方言驱动架构**：内置 NapCat、LLOneBot (LuckyLilliaBot)、Standard (go-cqhttp / Lagrange / onebots / WeChatBridge) 驱动           | 插件通过 `get_version_info` / `get_version` 自动探测并动态绑定最佳方言驱动；支持多端群相册、群文件多级解包、协议端真实头像与全链路观测日志。                       |
 | **QQ 官方机器人** | QQ Bot API v2（WebSocket/Webhook） | 官方统一 API                                                                                                                     | 需开启群全量消息；只分析启用后实时缓存的消息；图片/HTML 优先显示事件昵称，缺失时使用群内稳定匿名名；Markdown 文本使用成员艾特。                                      |
 | **Discord**       | Discord                            | Discord Gateway                                                                                                                  | **必须** 拥有 `Read Message History` (查看消息历史记录) 权限。                                                                                                       |
 | **Telegram**      | Telegram Bot API                   | Telegram Bot API                                                                                                                 | 若机器人不是群管理员，入群前需先在 BotFather 关闭隐私模式 (`/setprivacy` -> `Disable`)。若机器人已在群内且非管理员，关闭后需要先移出机器人再重新拉入，设置才会生效。 |
@@ -528,8 +609,7 @@ AI:     (自动调用 group_daily_analysis_trigger)
 > 插件采用了开放闭合原则 (OCP) 的**方言驱动解耦架构**，在连接时自动探测后端实现并无缝自适应：
 > 1. **NapCat.Onebot**：支持标准逆序分页、独有的 `upload_file_stream` 分块流式上传大图/兜底、`get_qun_album_list` 群相册列表与协议端真实头像解析。
 > 2. **LLOneBot (LuckyLilliaBot)**：支持相册上传专属 `files` 列表参数、相册列表 `data: list` 数组解包与多层嵌套兼容。
-> 3. **SnowLuma**：支持专属 `message_id` 锚点分页拉取群历史（不传 `reverseOrder`）、精准识别 `result=120` / `rejected` 发送拒绝与禁言错误。
-> 4. **Standard (go-cqhttp / Lagrange / onebots / 微信桥接 WeChatBridge)**：
+> 3. **Standard (go-cqhttp / Lagrange / onebots / 微信桥接 WeChatBridge)**：
 >    - **真实用户头像**：针对微信/企业微信接入等映射数字 ID 场景，优先通过 `get_stranger_info` / `get_user_info` 获取真实头像 URL（带 1 小时正缓存与并发去重），失败时自动回退官方 CDN 并进入 10 分钟负缓存，杜绝重复无效请求。
 >    - **群文件与相册多级解包**：自动兼容 `data.folders`、`data.album_list`、顶层列表等不同协议端返回格式，确保文件夹自动创建与归档不回退。
 >    - **全链路可观测日志**：动作发起、参数目标、原始响应 Payload 与解析降级流转全景上报，方便快速诊断排障。
@@ -541,9 +621,14 @@ AI:     (自动调用 group_daily_analysis_trigger)
 > - 在群聊中需要由群主允许机器人接收群内全部消息，使 AstrBot 能收到 `GROUP_MESSAGE_CREATE` 事件；只开放 @ 消息时，报告只能覆盖 @ 机器人的聊天。
 > - QQ 官方 API 不提供“按群拉取历史消息”的接口。插件会从启用后开始实时保存消息，并从 AstrBot 本地消息历史库分页读取；启用前的群聊无法自动回填。
 > - 官方群和成员使用 `group_openid` / `member_openid`，不是群号或 QQ 号。配置白名单、定时任务时建议先在群内执行 `/sid`，填写完整 UMO。
+> - 新分析会通过官方接口查询群名并显示在任务记录中，无需新增配置。群名会缓存一小时；权限不足、限流或网络失败时保留上次获取的群名或 OpenID，五分钟后可再次尝试，不影响分析和发送。已有历史记录不会批量改名，群名查询也不用于判断管理员权限。
 > - 官方群事件提供有效昵称时会用于报告；昵称缺失时使用群内稳定匿名名，避免直接展示 `member_openid`。
-> - QQ 官方文本报告使用自定义 Markdown，并默认通过 AstrBot T2I 生成透明背景的群聊概览图，将日期、基础统计和 24 小时竖向直方图合并为紧凑布局。可在 `QQ 官方机器人` 配置组关闭；渲染失败时自动回退为包含文字条形图的完整文本报告。
-> - Markdown 概览图直接使用 AstrBot T2I 返回的公网 URL。请确保当前 T2I 端点域名已加入 QQ 开放平台的消息 URL 配置。
+> - 表情统计只采用本条原始事件的 `<faceType=…>` 标记或明确的 `Face` 组件，入库保存类型、标识与必要的可读名称，历史读取后用于群统计、个人统计及增量合并。同一消息重复接收不会重复入库；同一条正文中重复使用的表情按实际次数记录，引用消息中的表情不重复计算。
+> - QQ 官方附件无法仅凭 URL、GIF 后缀或文件名可靠区分普通图片与表情包，因此图片保持图片类型，不一律计为表情；纯文本 Unicode emoji 也不额外扫描，不增加相关依赖。旧记录若只剩 `[表情:…]` 描述，无法确定是否为用户手打文字，不据此补猜表情。
+> - QQ 官方文本报告使用自定义 Markdown，默认启用透明背景的群聊概览图，将日期、基础统计和 24 小时竖向直方图合并为紧凑布局。可在 `QQ 官方机器人 → 启用群聊概览图` 关闭（原名称为“启用 T2I 群聊概览图”，配置键不变）。生成或发送概览图失败时恢复包含文字条形图的完整报告。
+> - 首选图片方案为 Typst 时，使用插件数据目录中的中文字体生成固定 940×423 PNG，通过 QQ 官方素材管理接口上传，获得 `qqbot-media://` 引用后与正文在同一条 Markdown 中发送；不需要公网图床，也不会把本地路径或 Base64 塞进 Markdown。请先在数据管理下载中文字体。
+> - QQ 素材接口有每个机器人 100 张的数量限制；报告发送结束后，插件只删除本次自己上传的素材以释放配额，已发送消息中的图片不受影响。接口不可用或上传失败时使用完整文字报告，不会另发独立图片。
+> - HTML/T2I 概览图沿用公网 URL 在 Markdown 内嵌入图片；请确保 T2I 端点域名已加入 QQ 开放平台的消息 URL 配置。消息要求 QQ 校验图片转存，失败后使用完整文字报告。
 > - 本次适配只覆盖普通 QQ 群，不包含频道或子频道。
 
 > [!CAUTION]
@@ -582,13 +667,88 @@ AI:     (自动调用 group_daily_analysis_trigger)
 
 - 通过 `incremental_group_list_mode + incremental_group_list` 指定哪些群走增量模式，并使用 `incremental_min_messages` 设置每批触发消息数。
 
+## 图片报告与 Typst 本地渲染
+
+### 选择渲染方式
+
+图片报告可按优先级依次尝试不同方案：
+
+| 方案 | 在哪里渲染 | 字体与装饰图片 |
+| --- | --- | --- |
+| 海外 / 内地方案（AstrBot T2I） | 使用群聊绑定的 AstrBot 图片服务 | 按当前方案的 CDN、在线字体等配置加载 |
+| 自定义 T2I 方案 | 连接自行填写的兼容 T2I 服务地址 | 在线加载；也可显式选择使用服务端已安装字体 |
+| Typst 本地排版 | 在 **AstrBot 所在服务器或容器**中启动插件独立编译进程，无需 Chromium 或 AstrBot T2I 服务 | 字体由插件 data 目录管理，装饰图片本地优先，缺失时从方案 CDN 获取 |
+
+Typst 只生成静态图片，支持 PNG 和 JPEG；HTML 网页报告仍走 HTML 模板，保留网页交互与动效。远程 T2I 通常无法访问机器人本机的文件，给 Typst 下载字体或素材不会让远程 HTML 渲染器自动使用它们，HTML 默认仍使用 CDN 字体和图片。
+
+目前内置主题提供 Typst 排版。各主题保留自身配色和主要组件结构；静态图片不包含 HTML 的响应式布局、折叠或动画。
+
+### 启用 Typst
+
+1. 升级插件并确认依赖安装成功。若提示缺少 `typst`，通过 AstrBot 插件依赖安装流程补装后重载插件。
+2. 打开插件 WebUI「**配置中心 → 图片渲染策略 → 图片渲染方案**」，点击「**添加渲染方案 → Typst 本地排版**」。希望首先使用本地渲染时，设置比其他方案更小的优先级；同优先级按列表顺序执行。已有 T2I 方案可保留用于失败回退。
+3. 在该方案的「**Typst 字体**」选择报告主题，点击「**下载所选模板字体**」；在「**模板原始素材**」选择同一主题并下载缺失素材。只需准备所用主题，共享文件自动复用，也可一次补齐全部预设资源。
+4. 在「**基础设置**」选择「**报告模板**」，并在「**输出格式（可多选）**」中包含 `image`。手动分析使用首个选中的输出格式，希望手动生成图片时请将 `image` 放在首位。方案内的 PNG / JPEG 是图片文件格式，与这里的 `image` / `text` / `html` 报告类型不同。
+5. 保存配置。可先点击方案内的「**测试渲染**」验证编译器能否出图；测试不调用大模型、不向群发送消息，也不能代替完整主题的字体和素材检查。随后使用群内「群分析」命令或 WebUI「手动触发分析」生成报告。
+
+> [!NOTE]
+> Release 包不附带全部字体及装饰图。首次使用请先补齐资源；Typst 的字体、原始素材分别保存在插件数据目录 `typst/fonts/`、`typst/resources/`，升级时可继续复用。模板列表会按当前渲染引擎和输出格式显示兼容项；只有 HTML 的主题不会用于 Typst，仅有 Typst 的主题不能生成 HTML 网页。
+
+### 字体与素材下载、上传
+
+方案内的「**管理 / 上传字体**」和「**管理 / 上传模板素材**」可直达同一套[数据管理面板](#数据与资源管理)，带上所选主题和下载来源；返回方案后保留未保存的配置。
+
+- **字体来源**：默认「CDN 优先（大字库直连）」，也可切换为「GitHub Raw 直连（全部字体）」。ATRI 文楷、Miku 全瀨體等大字体本身就从固定版本 Raw 下载，更换 CDN 不会改变这些直连地址。下载由机器人服务器或容器执行，浏览器能访问不代表服务端能访问；Raw 受限时需检查服务端网络或代理。
+- **下载进度与取消**：字体显示当前文件、实际来源、接收字节与等待时间，素材显示完成数量与失败文件。下载可以取消，已完成文件保留；失败重试只补缺失项，可切换 CDN 或字体来源后再试。
+- **手动补字体**：在字体管理对应行点击「查看上游」核对版本，或使用「直接下载」在浏览器下载，再点击该行「上传此字体」，自动按预设文件名保存。上传显示进度并支持取消；普通「上传字体」保留文件名，适合自定义字体。若提示宿主不支持二进制上传，请升级 AstrBot 后重试。
+- **逐文件补素材**：进入「模板原始素材 → 主题素材管理」，选定主题并展开「素材文件与状态」，可上传或替换清单中的单个文件；「本地素材与替换」管理已保存到插件 data 的文件。资源优先本地复用，尚未准备的装饰图会在渲染时尝试从方案 CDN 获取，缺图时记录警告并降级展示。
+- **共享影响**：替换或移除字体可能影响多个主题，操作前可查看依赖关系。
+
+### 清晰度、超时与运行开销
+
+Typst 排版固定为 **940px 逻辑版心**，高度随内容增长。方案的「**导出清晰度（PPI）**」只改变像素密度，不改变字号、换行和布局：
+
+| 导出密度 | 成品宽度 | 使用建议 |
+| --- | --- | --- |
+| 144 PPI（默认） | 940px | 日常使用、资源有限的服务器 |
+| 180 PPI | 1175px | 需要更多文字细节，接受额外开销 |
+| 216 PPI | 1410px | 更看重原图清晰度，接受更高内存与更长等待 |
+
+PNG 无损，调节「JPEG 质量」不会改变 PNG 清晰度。超长报告会在导出前根据像素预算逐档降低密度，任务详情显示请求值与实际值。提高 PPI 会增加栅格导出耗时和内存，不能保证本地渲染比远程 T2I 更快；多个原生编译任务共用编译名额，排队可以避免同时生成长图叠加内存峰值。
+
+「**单次编译超时（毫秒）**」默认 `30000`（30 秒），仅限制每次编译进程，素材准备与排队另计；主题编译和基础恢复分别计时，整轮图片生成仍受五分钟总上限约束。主题失败或超时时，会尝试以标准密度的基础排版保留正文；仍失败时继续尝试已配置的其他方案，最终无法出图时回退文字。主动取消不会继续恢复或尝试下一方案。
+
+耗时较长时，打开「**分析记录 → 详情**」，逐层展开图片渲染阶段，查看素材、排队、布局与栅格导出耗时。开启运行时遥测后还可查看编译子进程 RSS 峰值、峰值增长与 CPU 耗时；「宿主 RSS 净变化」仅表示 AstrBot 进程变化，不能代替编译内存占用。父阶段包含子阶段耗时，各层百分比不要直接相加。CPU 较弱、报告较长或密度较高时，可降低 PPI，或根据实测调整单次编译超时。
+
+## 数据与资源管理
+
+新版 WebUI 简化了顶部入口名称，功能仍在原位置：「运行总览」改为「总览」，「统计与消耗」改为「统计」，「历史报告」改为「报告」，「配置中心」改为「配置」，「数据管理」改为「数据」，「运行日志」改为「日志」；「分析记录」名称不变。下文沿用旧名称的操作路径也对应这些入口。
+
+在「分析记录」点击「详情」查看阶段树，选择阶段后可阅读对应的调用、渲染或错误记录；「耗时、内存与传输」保留图表，「完整任务记录」可查看全部字段。原「幂等续跑」按钮改为「继续分析」，仍可临时选择模型和报告模板；系统优先复用已有快照，快照缺失时可能重新分析并产生模型消耗。
+
+打开插件 WebUI「**数据管理 → 存储空间概览 → 存储分区明细与管理**」，可查看各类数据占用，并进入对应管理页：
+
+| 分区 | 可以做什么 |
+| --- | --- |
+| 历史报告文件 | 预览、下载，按文件名搜索，按 HTML / JPG / PNG 筛选；支持 JPG + PNG 组合筛选和跨页多选删除 |
+| 自定义报告模板 | 搜索并选择实际模板目录，查看 HTML / Typst 支持标签，安装模板包、管理源码与素材、移除模板 |
+| Typst 字体 | 按主题检查已安装、缺失和共享依赖，补齐、上传、替换或移除字体 |
+| 模板原始素材 | 查看主题资源清单，按需下载或全部补齐，上传替换单个文件，管理本地素材 |
+| 配置参考素材 | 预览、上传或替换参考图片，管理文件时注意仍在使用它的配置 |
+| 配置自动备份 | 查看版本、时间与原始配置内容，下载原件或删除备份；不直接修改备份内容 |
+| 派生图片与预览缓存 | 查看并清理可重建文件；运行目录和数据库通过对应业务入口管理 |
+
+文件列表包含「**Typst 模板（.typ）**」等类型筛选。多选删除每批最多 200 项，改变筛选条件会清空选择，防止误删隐藏项；覆盖和删除会校验文件版本，遇到其他页面刚修改过的文件时请刷新后再操作。增量批次、阶段快照与分析存档也提供相应的查询和管理入口，无需直接编辑数据库文件。
+
+WebUI 手动分析可从「**运行总览 → 正在执行中的分析任务 → 中止**」取消。取消请求接受后仍需等待后台资源回收；运行状态、分析记录与任务详情会同步更新。任务失败后可在详情中续跑，有有效分析快照时复用已经完成的 LLM 分析；历史记录只有摘要时不能还原完整结果。
+
 ## HTML 报告与自建外链
 
 如果你希望在群里发送的不是图片，而是一个可以点击跳转的精美网页链接，可以使用 HTML 格式输出。
 
 ### 1. 配置流程
 
-1. **设置输出格式**：在 `basic` 设置中将 `output_format` 改为 `html`。
+1. **设置输出格式**：在「基础设置」的「输出格式（可多选）」（`output_format`）中选择 `html`；手动分析希望直接发送网页时，将它放在首位。
 2. **指定储存目录 (`html_output_dir`)**：设置 HTML 文件在服务器上的保存路径。留空则默认保存在插件数据目录。
 3. **配置外链基址 (`html_base_url`)**：这是关键。如果你使用 Nginx/Apache 等 Web 服务器将上述目录映射到了公网，请在这里填写访问的前缀（如 `https://report.example.com`）。
 
@@ -616,7 +776,11 @@ AI:     (自动调用 group_daily_analysis_trigger)
 
 1. **模板存放路径**：
    放置于插件数据目录 `custom_t2i_templates/reporting_templates/<模板英文或拼音目录名>/`（例如 `custom_t2i_templates/reporting_templates/genshin/`）。
-2. **完整模板文件组成**（标准的报告主题共包含以下 7 个 Jinja2 HTML 模板）：
+2. **按所需输出提供入口**：
+   - `report.typ`：Typst 图片入口，可以独立组成 Typst 模板，也可与 HTML 入口共存；接收运行时提供的 `data.json`，使用固定 940px 逻辑版心，高度自然延伸。
+
+   HTML 主题可包含以下 7 个 Jinja2 文件，分别提供长图、网页与子模块排版：
+
    - `image_template.html`：**长图海报主骨架**（接收并组合以下各小模块生成的 HTML 片段）。
    - `html_template.html`：**独立网页报告主骨架**。
    - `topic_item.html`：**话题总结列表模块**（渲染 `topics_list`）。
@@ -627,13 +791,14 @@ AI:     (自动调用 group_daily_analysis_trigger)
 3. **支持局部修改与自动兜底**：
    - **全量深度定制**：提供全部 7 个 HTML 文件，实现从页面主视觉到各个子卡片组件的 100% 定制。
    - **轻量局部定制**：如果仅针对长图外框或主布局进行微调（例如仅提供了 `image_template.html`），插件的 Jinja2 多层回退引擎会自动使用默认手账模板（`scrapbook`）中对应的小模块 HTML 作为兜底加载，确保即使子模块不全也能稳定渲染。
+   - **Typst 失败恢复**：主题编译失败后尝试基础排版保留正文。HTML 与 Typst 主入口各自独立，不会把缺少入口的主题当作另一种引擎的完整实现。
 4. **即选即用**：
-   放入新模板目录后无需重启机器人，在 Web 控制台的 **断点续跑弹窗** 与 **报告归档管理（免 Token 切换主题重绘）** 下拉菜单中均会自动实时出现该选项。
+   放入新模板目录后无需重启机器人。配置、断点续跑和历史报告重绘按当前渲染引擎及输出格式筛选兼容入口，展示 HTML 图片、HTML 网页、Typst 图片等支持标签；只有 Typst 入口的模板不能用于 HTML 网页输出。
 5. **在线安装与卸载**：
    在 Web 控制台配置页的模板选择器旁点击「安装模板」，可通过 **GitHub 仓库链接**
    （如 `https://github.com/owner/repo`，支持 `/tree/<分支>`）自动下载安装，
    或直接上传 **zip 压缩包**；安装后立即生效，可随时通过「卸载模板」移除。
-   **内置模板不可卸载**，仅可卸载通过安装器下载的自定义模板。
+   也可在「数据管理 → 存储分区明细与管理 → 自定义报告模板」安装模板包，通过可搜索的选择器进入指定模板，维护源码与素材。安装包、手动创建的模板及缺少有效入口的目录均可按整组移除；**内置模板不可卸载**。删除整个模板前请确认没有群聊仍在使用它。
    📖 完整模板制作指南（变量契约、回退机制、打包规范、调试、贡献清单）见
    **《[报告视觉模板开发指南](docs/REPORT_TEMPLATE_GUIDE.md)》**，参考示例仓库：[lingyun14beta/daily-analysis-report-theme](https://github.com/lingyun14beta/daily-analysis-report-theme)。
 
@@ -659,6 +824,8 @@ AstrBot 更新插件时会先删除旧插件目录，再解压或移动新目录
 
 ### 图片生成失败 / 渲染返回非图片数据 / 头部 `496e7465726e616c...` 的排查指南
 
+以下排查针对 HTML / T2I 服务。若使用「Typst 本地排版」，请先查看[本地渲染的超时与开销说明](#清晰度超时与运行开销)，并在任务详情区分素材下载、排队、编译和编码耗时；Typst 不使用 Playwright / Chromium。
+
 > [!WARNING]
 > **常见报错特征**：
 > - `[群分析插件] 渲染引擎返回了非图片数据: HTTP 500 (Internal Server Error) ...`
@@ -675,10 +842,10 @@ AstrBot 更新插件时会先删除旧插件目录，再解压或移动新目录
 
 > [!IMPORTANT]
 > **排查手段 1：外链大字体包/图片 CDN 下载阻塞（国内服务器高发）**
-> - **每轮单独配置资源**：在插件 WebUI 的「图片渲染方案」点击「添加渲染方案」（AstrBot 配置页为「添加条目」），选择海外、内地或自定义 T2I 方案，再修改这一轮的模板 CDN、Google Fonts 和 Gstatic 地址。AstrBot 配置页使用下拉预设和“自定义地址”入口，保存后会显示并保留实际地址；插件 WebUI 可直接在选框中输入。两端共用配置，已打开的页面需重新打开后查看另一端的修改。CDN 需支持 `/gh/` 和 `/npm/`。使用前请测试T2I服务所在网络的速度和可达性；「检测可用性」检查的是机器人服务器，远程 T2I 仍需实际生成报告确认。
+> - **每轮单独配置资源**：在插件 WebUI 的「图片渲染方案」点击「添加渲染方案」（AstrBot 配置页为「添加条目」），选择海外、内地或自定义 T2I 方案，再修改这一轮的模板 CDN、Google Fonts 和 Gstatic 地址。AstrBot 配置页使用下拉预设和“自定义地址”入口，保存后会显示并保留实际地址；插件 WebUI 可直接填写地址，也可通过“选择预设”填入。两端共用配置，已打开的页面需重新打开后查看另一端的修改。CDN 需支持 `/gh/` 和 `/npm/`。使用前请测试T2I服务所在网络的速度和可达性；「检测可用性」检查的是机器人服务器，远程 T2I 仍需实际生成报告确认。
 > - **自定义服务的字体加载方式**：通常保持「在线字体」。已在T2I服务安装字体，或字体下载经常超时且愿意接受备用字体时，可选择「使用已安装字体」；只影响本轮图片报告，素材图片仍需 CDN。安装位置、完整字体清单及适用情况见[字体安装指南](https://cdn.jsdmirror.com/gh/SXP-Simon/astrbot_plugin_qq_group_daily_analysis@main/docs/T2I_FONTS.md)。
 > - **配置多轮回退**：可为不同轮次填写不同 CDN，也可以只更换字体地址。优先级越小越先执行，同优先级按列表顺序执行；资源地址变化时重新准备 HTML，成功后停止。所有轮次共用 5 分钟总等待上限。独立 HTML 报告和模板预览采用第一优先级方案的资源地址。
-> - **先单独测试渲染服务**：三种方案均有「测试渲染」按钮，不用先保存，也不消耗大模型 Token 或向群里发消息。海外／内地方案可测试 AstrBot 默认配置，或已有群聊绑定的配置；自定义方案测试当前填写的地址和 Token。测试小图不加载外链字体和图片，不能代替完整报告的素材检查。容器名称支持下划线，但两个容器需要网络互通；配置示例见[渲染方案与容器网络说明](docs/REPORT_TEMPLATE_GUIDE.md#52-模板内部引用的图片重要渲染链路约束)。
+> - **先单独测试渲染服务**：海外、内地、自定义 T2I 与 Typst 方案均有「测试渲染」按钮，不用先保存，也不消耗大模型 Token 或向群里发消息。海外／内地方案可测试 AstrBot 默认配置，或已有群聊绑定的配置；自定义方案测试当前填写的地址和 Token；Typst 验证本地编译器。测试小图不能代替完整报告的字体和素材检查。容器名称支持下划线，但两个容器需要网络互通；配置示例见[渲染方案与容器网络说明](docs/REPORT_TEMPLATE_GUIDE.md#52-模板内部引用的图片重要渲染链路约束)。
 > - **添加自定义T2I服务**：添加时可选「海外方案」「内地方案」或「自定义 T2I 方案」。前两种跟随本群绑定的 AstrBot 配置，未配置地址时仍由框架使用官方服务。自定义方案默认填入 `http://127.0.0.1:8999/text2img`，可修改地址并填写可选 Token，兼容官方独立服务与 [插件形式的 T2I 服务](https://github.com/XTsat/astrbot_plugin_t2i_service)。它直接连接指定服务，不读取 AstrBot 地址或环境代理。T2I超时默认 20 秒，请求等待上限默认 40 秒，两项可独立设置，为服务内部切换备用地址和返回图片留出时间；停止操作与五分钟总上限仍生效。自定义方案的资源环境默认海外，可切换内地；空资源地址跟随环境预设，手填地址优先。容器中的 `127.0.0.1` 指向该容器，其他容器或宿主机服务需填写对应地址。本地T2I不会自动缓存外链素材。
 > - **查看升级前的配置**：在「数据管理 → 存储空间概览 → 配置自动备份」点击「查看备份」，可以查看旧版本、备份时间和原始 JSON 层级。升级时先归档旧快照再迁移配置，正常保存后同步更新保护快照；旧资源项不再长期保留在正式配置中。没有历史快照时只能使用预设，无法自动找回已被宿主清理的旧地址。
 > - **默认与旧配置**：初始提供海外（优先级 10）和内地（优先级 20）两项方案（均为 PNG、高分辨率、20 秒），默认 CDN 保留原地址。旧方案缺少资源字段时，升级会将原环境级地址补入方案并保存一次；已有的新字段和自定义图片保留。之后每轮独立生效，新字段留空使用该预设的默认地址。保存后列表按优先级排列，同优先级保持原顺序；清空列表后恢复上述两项，已有非空列表不会自动增加条目。渲染成功但缺少个别素材时，不会自动进入下一轮。

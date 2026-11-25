@@ -124,6 +124,10 @@ class ActiveTaskManager:
             self._tasks[task_id].current_stage = stage_str
             self._tasks[task_id].last_heartbeat = time.time()
             info = self._tasks[task_id]
+            # 群名可能在任务注册后才查到，随阶段快照同步给活跃列表和 SSE。
+            trace = TraceContext.get_active_trace(task_id)
+            if trace and trace.group_name:
+                info.group_name = trace.group_name
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(
@@ -185,7 +189,29 @@ class ActiveTaskManager:
                         TaskEvent.CANCEL,
                         error_message="由 WebUI 手动取消任务",
                     )
-                except (KeyError, ValueError, RuntimeError) as e:
+                except KeyError as e:
+                    # 刚提交的协程可能尚未开始，不能因 Trace 尚未创建而放弃取消。
+                    if task_info.asyncio_task is None or task_info.asyncio_task.done():
+                        logger.info(f"拒绝取消缺少追踪记录的任务 {task_id}: {e}")
+                        return False
+                    # 查询状态的线程执行期间，后台可能已绑定但尚未落库；先补齐再取消。
+                    active_trace = TraceContext.get_active_trace(task_id)
+                    if active_trace is not None:
+                        try:
+                            await active_trace.persist_snapshot_async()
+                            await asyncio.to_thread(
+                                self.lifecycle_service.transition,
+                                task_id,
+                                TaskEvent.CANCEL,
+                                error_message="由 WebUI 手动取消任务",
+                            )
+                        except (KeyError, ValueError, RuntimeError) as retry_error:
+                            logger.info(
+                                f"拒绝取消初始化状态冲突的任务 {task_id}: {retry_error}"
+                            )
+                            return False
+                    logger.info(f"取消尚未初始化追踪记录的 WebUI 任务: {task_id}")
+                except (ValueError, RuntimeError) as e:
                     logger.info(f"拒绝取消已结束或状态冲突的任务 {task_id}: {e}")
                     return False
 
@@ -194,10 +220,30 @@ class ActiveTaskManager:
 
             self._tasks.pop(task_id, None)
 
+        logger.info(
+            f"已请求中止 WebUI 活跃任务: {task_id}，群: {task_info.group_id}，平台: {task_info.platform}"
+        )
         await self._broadcast_event(
             {"event": "task_canceled", "data": {"task_id": task_id}}
         )
         return True
+
+    def is_analysis_running(self, group_id: str, platform_id: str) -> bool:
+        """检查该会话完整的手动分析流程，包含准备、渲染和发送。
+
+        Args:
+            group_id: 群标识。
+            platform_id: 真实平台实例 ID。
+
+        Returns:
+            是否已有同会话的普通分析或续跑任务，其他类型保持独立。
+        """
+        return any(
+            info.group_id == group_id
+            and info.platform == platform_id
+            and info.trigger_type in {"manual", "web_ui", "llm_tool", "resume"}
+            for info in self._tasks.values()
+        )
 
     def get_active_tasks(self) -> list[dict[str, object]]:
         """获取所有当前正在运行的任务快照"""

@@ -1,5 +1,5 @@
 import React from "react";
-import { useTheme } from "../lib/useTheme";
+import { cn } from "@/shared/lib/cn";
 
 interface MarkdownHintProps {
   content: string;
@@ -7,13 +7,7 @@ interface MarkdownHintProps {
   className?: string;
 }
 
-export const MarkdownHint: React.FC<MarkdownHintProps> = ({
-  content,
-  style,
-  className,
-}) => {
-  const { isDark } = useTheme();
-
+export const MarkdownHint: React.FC<MarkdownHintProps> = ({ content, style, className }) => {
   if (!content) return null;
 
   // 拆分常见 Markdown 语法单元：[链接文本](url)、`行内代码`、**粗体**、换行符
@@ -21,7 +15,7 @@ export const MarkdownHint: React.FC<MarkdownHintProps> = ({
   const parts = content.split(tokenRegex);
 
   return (
-    <span className={className} style={style}>
+    <span className={cn("[overflow-wrap:anywhere]", className)} style={style}>
       {parts.map((part, index) => {
         if (!part) return null;
 
@@ -35,12 +29,7 @@ export const MarkdownHint: React.FC<MarkdownHintProps> = ({
               href={linkUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                color: isDark ? "#60a5fa" : "#2563eb",
-                textDecoration: "underline",
-                wordBreak: "break-all",
-                fontWeight: 500,
-              }}
+              className="break-all font-medium text-secondary-ink underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
               onClick={(e) => e.stopPropagation()}
             >
               {linkText}
@@ -54,21 +43,7 @@ export const MarkdownHint: React.FC<MarkdownHintProps> = ({
           return (
             <code
               key={index}
-              style={{
-                fontFamily:
-                  "'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                fontSize: "0.92em",
-                padding: "1px 5px",
-                margin: "0 2px",
-                borderRadius: 3,
-                background: isDark
-                  ? "rgba(255, 255, 255, 0.08)"
-                  : "rgba(0, 0, 0, 0.06)",
-                color: isDark ? "#fca5a5" : "#b91c1c",
-                border: `1px solid ${
-                  isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)"
-                }`,
-              }}
+              className="mx-0.5 rounded border border-solid border-secondary-line bg-secondary-soft px-1 py-px font-mono text-[0.92em] text-secondary-ink"
             >
               {codeMatch[1]}
             </code>
@@ -79,13 +54,7 @@ export const MarkdownHint: React.FC<MarkdownHintProps> = ({
         const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
         if (boldMatch) {
           return (
-            <strong
-              key={index}
-              style={{
-                fontWeight: 600,
-                color: isDark ? "#f3f4f6" : "#111827",
-              }}
-            >
+            <strong key={index} className="font-medium text-foreground">
               {boldMatch[1]}
             </strong>
           );

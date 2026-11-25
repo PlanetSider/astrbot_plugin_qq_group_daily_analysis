@@ -111,12 +111,15 @@ async def test_watcher_stop_is_safe_to_call_twice():
 
 
 @pytest.mark.asyncio
-async def test_handler_aborts_work_and_releases_group_lock():
+@pytest.mark.parametrize("origin", [None, "任意东西:GroupMessage:MEMBER_OPENID_GROUP_OPENID", "qq_webhook:GroupMessage:GROUP_OPENID"])
+async def test_handler_aborts_work_and_releases_group_lock(origin):
     guard = TaskGuard(2)
     service = StubAnalysisService(guard)
     manager = StubTaskManager()
     handler = make_handler(service, manager)
     event = HostEvent()
+    if origin:
+        event.unified_msg_origin = origin
     delivered: list[object] = []
 
     async def consume() -> None:
@@ -335,7 +338,7 @@ async def test_stop_signal_passes_through_text_send_fallback():
         report_generator=TextReportGenerator(),
     )
     with pytest.raises(AnalysisStoppedError):
-        await handler._send_text_reports(  # type: ignore[arg-type]
+        await handler.send_text_reports(  # type: ignore[arg-type]
             "123456", {}, False, BoomAdapter()
         )
 
@@ -364,12 +367,12 @@ async def test_stop_during_upload_keeps_send_but_finalizes_cleanly(monkeypatch):
         config=CaptionConfig(),
         stop_watcher_factory=capture_watcher,
     )
-    monkeypatch.setattr(handler, "_save_report_to_history", lambda *_a, **_k: None)
+    monkeypatch.setattr(handler, "save_report_to_history", lambda *_a, **_k: None)
 
     async def noop_upload(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(handler, "_try_upload_image", noop_upload)
+    monkeypatch.setattr(handler, "try_upload_image", noop_upload)
 
     event = HostEvent()
     delivered: list[object] = []
@@ -405,7 +408,7 @@ class ExplodingStubbornService:
         self.task: asyncio.Task[object] | None = None
         self.release = False
 
-    def is_group_running(self, group_id: str, task_type: str = "daily") -> bool:
+    def is_group_running(self, group_id: str, task_type: str = "daily", platform_id: str | None = None) -> bool:
         return False
 
     async def execute_daily_analysis(self, **kwargs: object) -> dict[str, object]:
@@ -471,7 +474,7 @@ class GatedService:
         self.gate = asyncio.Event()
         self.started = asyncio.Event()
 
-    def is_group_running(self, group_id: str, task_type: str = "daily") -> bool:
+    def is_group_running(self, group_id: str, task_type: str = "daily", platform_id: str | None = None) -> bool:
         return False
 
     async def execute_daily_analysis(self, **kwargs: object) -> dict[str, object]:

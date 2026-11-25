@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
+from ...shared.type_guards import is_string_mapping
 from ...utils.logger import logger
 
 if TYPE_CHECKING:
@@ -73,8 +74,10 @@ class FeishuBotSender:
                     f"[飞书机器人] 获取访问凭证失败，HTTP 状态码：{response.status}"
                 )
                 return None
-            body: object = await response.json()
-            if not isinstance(body, dict):
+            payload: object = await response.json()
+
+            body = payload if is_string_mapping(payload) else None
+            if body is None:
                 logger.error("[飞书机器人] 获取访问凭证的响应不是有效对象")
                 return None
             if body.get("code") != 0:
@@ -120,19 +123,21 @@ class FeishuBotSender:
             if not 200 <= response.status < 300:
                 logger.error(f"[飞书机器人] 推送失败，HTTP 状态码：{response.status}")
                 return False
-            body: object = await response.json()
+            payload: object = await response.json()
+
+            body = payload if is_string_mapping(payload) else None
             if (
-                not isinstance(body, dict)
+                body is None
                 or body.get("code") != 0
                 or not isinstance(body.get("data"), dict)
             ):
                 # code 和 msg 是飞书官方错误描述，不含应用凭据，截断后记录便于排查。
-                code: object = (
-                    body.get("code") if isinstance(body, dict) else "无效响应"
-                )
+                code: object = body.get("code") if body is not None else "无效响应"
                 detail = ""
-                if isinstance(body, dict) and isinstance(body.get("msg"), str):
-                    detail = body["msg"][:_MAX_ERROR_DETAIL_LENGTH]
+                if body is not None:
+                    msg = body.get("msg")
+                    if isinstance(msg, str):
+                        detail = msg[:_MAX_ERROR_DETAIL_LENGTH]
                 logger.error(
                     f"[飞书机器人] 接口未确认推送成功（code: {code}，msg: {detail}），"
                     "请检查用户 ID 与类型是否匹配、机器人权限及版本发布状态"
@@ -244,13 +249,14 @@ class FeishuBotSender:
                     f"[飞书机器人] 上传漫画图片失败，HTTP 状态码：{response.status}"
                 )
                 return None
-            body: object = await response.json()
-            if not isinstance(body, dict) or body.get("code") != 0:
+            payload: object = await response.json()
+            body = payload if is_string_mapping(payload) else None
+            if body is None or body.get("code") != 0:
                 logger.error("[飞书机器人] 上传漫画图片被拒绝，请检查 im:resource 权限")
                 return None
-            data: object = body.get("data")
+            data = body.get("data")
             image_key: object = (
-                data.get("image_key") if isinstance(data, dict) else None
+                data.get("image_key") if is_string_mapping(data) else None
             )
             if not isinstance(image_key, str) or not image_key:
                 logger.error("[飞书机器人] 上传图片响应缺少有效 image_key")
@@ -309,19 +315,21 @@ class FeishuBotSender:
                     f"[飞书机器人] 漫画推送失败，HTTP 状态码：{response.status}"
                 )
                 return False
-            body: object = await response.json()
+            payload: object = await response.json()
+
+            body = payload if is_string_mapping(payload) else None
             if (
-                not isinstance(body, dict)
+                body is None
                 or body.get("code") != 0
                 or not isinstance(body.get("data"), dict)
             ):
                 # code 和 msg 是飞书官方错误描述，不含应用凭据，截断后记录便于排查。
-                code: object = (
-                    body.get("code") if isinstance(body, dict) else "无效响应"
-                )
+                code: object = body.get("code") if body is not None else "无效响应"
                 detail = ""
-                if isinstance(body, dict) and isinstance(body.get("msg"), str):
-                    detail = body["msg"][:_MAX_ERROR_DETAIL_LENGTH]
+                if body is not None:
+                    msg = body.get("msg")
+                    if isinstance(msg, str):
+                        detail = msg[:_MAX_ERROR_DETAIL_LENGTH]
                 logger.error(
                     f"[飞书机器人] 漫画接口未确认推送成功（code: {code}，msg: {detail}），"
                     "请检查用户 ID 与类型是否匹配、机器人权限及版本发布状态"

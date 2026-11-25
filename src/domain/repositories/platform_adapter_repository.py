@@ -18,6 +18,15 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
+class MarkdownImageSupportProtocol(Protocol):
+    """支持将本地图片上传为 Markdown 素材引用的平台扩展能力。"""
+
+    async def upload_markdown_image(self, image: bytes) -> str | None:
+        """上传图片并返回可内嵌的引用，不发送独立图片消息。"""
+        ...
+
+
+@runtime_checkable
 class PlatformAdapterProtocol(Protocol):
     """跨平台适配器标准行为协议。"""
 
@@ -57,7 +66,7 @@ class PlatformAdapterProtocol(Protocol):
     async def send_forward_msg(
         self,
         group_id: str,
-        nodes: list[dict],
+        nodes: list[dict[str, object]],
     ) -> bool:
         """发送合并转发消息。"""
         ...
@@ -116,10 +125,6 @@ class PlatformAdapterProtocol(Protocol):
         """设置或移除消息表情回应。"""
         ...
 
-    def convert_to_raw_format(self, messages: list[UnifiedMessage]) -> list[dict]:
-        """将统一消息列表转换为平台原生字典结构。"""
-        ...
-
 
 @runtime_checkable
 class GroupAlbumSupportProtocol(Protocol):
@@ -147,7 +152,7 @@ class GroupAlbumSupportProtocol(Protocol):
     async def get_group_album_list(
         self,
         group_id: str,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """获取群相册列表。"""
         ...
 
@@ -185,6 +190,6 @@ class GroupFileSupportProtocol(Protocol):
     async def get_group_file_root_folders(
         self,
         group_id: str,
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """获取群文件根目录文件夹列表。"""
         ...

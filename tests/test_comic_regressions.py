@@ -12,6 +12,8 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfoNotFoundError
 
+import pytest
+
 from src.domain.value_objects import TokenUsage
 from src.infrastructure.reporting.generators import ReportGenerator
 from src.infrastructure.reporting.templates import HTMLTemplates
@@ -118,6 +120,11 @@ def load_main_method(name: str):
                 bot_manager=getattr(plugin, "bot_manager", None),
                 context=getattr(plugin, "context", None),
             )
+        if not hasattr(plugin, "config_manager") or plugin.config_manager is None:
+            plugin.config_manager = _comic_config_manager()
+        for key, value in _comic_config_manager().__dict__.items():
+            if not hasattr(plugin.config_manager, key):
+                setattr(plugin.config_manager, key, value)
         if not hasattr(plugin, "comic_command_handler"):
             plugin.comic_command_handler = ComicCommandHandler(
                 config_manager=getattr(plugin, "config_manager", None),
@@ -126,8 +133,9 @@ def load_main_method(name: str):
                 analysis_service=getattr(plugin, "analysis_service", None),
                 active_task_manager=getattr(plugin, "active_task_manager", None),
                 plugin_data_dir=getattr(plugin, "plugin_data_dir", None),
-                plugin_instance=plugin,
             )
+        if hasattr(plugin, "try_upload_image"):
+            plugin.comic_command_handler.try_upload_image = plugin.try_upload_image
         if not hasattr(plugin, "analysis_command_handler"):
             plugin.analysis_command_handler = AnalysisCommandHandler(
                 config_manager=getattr(plugin, "config_manager", None),
@@ -140,7 +148,6 @@ def load_main_method(name: str):
                 message_sender=getattr(plugin, "message_sender", None),
                 comic_handler=plugin.comic_command_handler,
                 plugin_data_dir=getattr(plugin, "plugin_data_dir", None),
-                plugin_instance=plugin,
             )
 
     if inspect.iscoroutinefunction(target_func):
@@ -178,58 +185,13 @@ def load_comic_service_method(name: str):
     Returns:
         可绑定到测试服务实例的方法。
     """
-    service_path = (
-        Path(__file__).parents[1]
-        / "src"
-        / "application"
-        / "services"
-        / "comic_application_service.py"
-    )
-    module = ast.parse(
-        service_path.read_text(encoding="utf-8"), filename=str(service_path)
-    )
-    service_class = next(
-        node
-        for node in module.body
-        if isinstance(node, ast.ClassDef) and node.name == "ComicApplicationService"
-    )
-    method = next(
-        node
-        for node in service_class.body
-        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-        and node.name == name
-    )
-    isolated_class = ast.ClassDef(
-        name="ComicServiceHarness",
-        bases=[],
-        keywords=[],
-        body=[method],
-        decorator_list=[],
-    )
-    isolated_module = ast.fix_missing_locations(
-        ast.Module(body=[isolated_class], type_ignores=[])
-    )
-    from collections.abc import Sequence
-    from contextlib import nullcontext
+    from src.application.services.comic_application_service import ComicApplicationService
 
-    from src.domain.value_objects import ComicStoryboard, SummaryTopic
-    from src.shared.constants import PLUGIN_NAME
-    from src.shared.trace_context import TraceContext
-
-    namespace = {
-        "Path": Path,
-        "PLUGIN_NAME": PLUGIN_NAME,
-        "mimetypes": mimetypes,
-        "logger": Mock(),
-        "Any": Any,
-        "Sequence": Sequence,
-        "SummaryTopic": SummaryTopic,
-        "ComicStoryboard": ComicStoryboard,
-        "TraceContext": TraceContext,
-        "nullcontext": nullcontext,
-    }
-    exec(compile(isolated_module, str(service_path), "exec"), namespace)
-    return getattr(namespace["ComicServiceHarness"], name)
+    from src.infrastructure.drawing.external_drawing_adapter import ExternalDrawingAdapter
+    migrated = {"_generate_via_big_banana": "generate_big_banana", "_generate_via_general_plugin": "generate_general", "_import_big_banana_image_resource": "_import_big_banana_image_resource"}
+    if name in migrated:
+        return getattr(ExternalDrawingAdapter, migrated[name])
+    return getattr(ComicApplicationService, name)
 
 
 def load_config_manager_class(plugin_data_dir: Path):
@@ -260,8 +222,12 @@ def load_config_manager_class(plugin_data_dir: Path):
         "refresh_rendering_schema_options",
         "save_config",
         "__init__",
-        "_get_group",
-        "_get_plugin_root",
+        "get_group",
+        "ensure_group",
+        "_get_scalar",
+        "_get_number",
+        "_get_string_list",
+        "get_plugin_root",
         "_get_plugin_version",
         "_get_schema_fingerprint",
         "_migrate_daily_comic_characters",
@@ -330,6 +296,10 @@ def load_config_manager_class(plugin_data_dir: Path):
         "__name__": "src.infrastructure.config.config_manager",
         "__package__": "src.infrastructure.config",
         "AstrBotConfig": object,
+        "cast": __import__("typing").cast,
+        "is_string_mapping": __import__("src.shared.type_guards", fromlist=["is_string_mapping"]).is_string_mapping,
+        "is_object_list": __import__("src.shared.type_guards", fromlist=["is_object_list"]).is_object_list,
+        "parse_rendering_strategies": __import__("src.infrastructure.config.rendering_config", fromlist=["parse_rendering_strategies"]).parse_rendering_strategies,
         "StarTools": SimpleNamespace(get_data_dir=Mock(return_value=plugin_data_dir)),
         "PLUGIN_NAME": "test_plugin",
         "__file__": str(config_path),
@@ -393,6 +363,7 @@ def test_qq_official_webhook_uses_official_report_capabilities():
             get_platform_name=Mock(return_value="qq_official_webhook"),
             platform_id="qq-official-main",
             send_text_report=AsyncMock(),
+            upload_markdown_image=AsyncMock(return_value=None),
         )
         markdown = AsyncMock(return_value=("正文", "回退正文"))
         mock_comic_trigger = Mock()
@@ -419,6 +390,8 @@ def test_qq_official_webhook_uses_official_report_capabilities():
 
         markdown.assert_awaited_once()
         assert markdown.await_args.kwargs["mention_style"] == "qq"
+        image_sender = markdown.await_args.kwargs["summary_image_uploader"]
+        assert image_sender == adapter.upload_markdown_image
         adapter.send_text_report.assert_awaited_once_with(
             "123456", "正文", fallback_content="回退正文",
         )
@@ -497,7 +470,8 @@ def test_existing_comic_character_inherits_global_storyboard_prompt(tmp_path: Pa
     config_manager = config_manager_class(config)
 
     character = config["daily_comic"]["comic_characters"][0]
-    assert character["storyboard_prompt"] == "旧版全局模板"
+    assert "storyboard_prompt" not in character
+    assert config["daily_comic"]["comic_styles"][0]["prompt_override"] == "旧版全局模板"
     assert (
         config_manager.get_comic_character_storyboard_prompt(character)
         == "旧版全局模板"
@@ -521,51 +495,56 @@ def test_comic_character_empty_storyboard_prompt_falls_back_to_global(tmp_path: 
     )
 
 
-def test_comic_generation_passes_character_storyboard_prompt():
-    """漫画生成应把选中角色的专属模板传给分镜分析器。"""
+@pytest.mark.parametrize("has_reference", [False, True], ids=["text-only", "reference"])
+def test_comic_generation_preserves_text_character_in_storyboard(has_reference):
+    """无论是否有参考图，都把角色人格和明确的外貌设定交给分镜。"""
     generate_comic = load_comic_service_method("generate_comic")
     topics = [{"topic": "话题", "detail": "详情"}]
-    character = {"name": "角色甲", "storyboard_prompt": "角色模板"}
-    llm_analyzer = SimpleNamespace(
-        analyze_comic_storyboards=AsyncMock(return_value=([], TokenUsage()))
-    )
-    config_manager = SimpleNamespace(
-        get_enable_daily_comic=Mock(return_value=True),
+    character_template = "主角有银色长发，佩戴蓝色花饰。她用轻快的语气吐槽。"
+    character = {"name": "角色甲", "storyboard_prompt": character_template}
+    config_manager = _comic_config_manager(
         get_selected_comic_character=Mock(return_value=character),
         get_comic_character_persona_id=Mock(return_value="persona-a"),
-        get_comic_character_storyboard_prompt=Mock(return_value="角色模板"),
+        get_comic_character_storyboard_prompt=Mock(return_value=character_template),
+        get_drawing_reference_images=Mock(
+            return_value=["reference.png"] if has_reference else []
+        ),
     )
-    from src.application.services.comic_application_service import ComicApplicationService
-
-    service = object.__new__(ComicApplicationService)
-    service.config_manager = config_manager
-    service.llm_analyzer = llm_analyzer
+    service = _comic_service(
+        config_manager,
+        drawing_client=None,
+        _fetch_reference_image=AsyncMock(return_value=(b"reference", "image/png")),
+    )
+    analyze = service.llm_analyzer.analyze_comic_storyboards
+    analyze.return_value = ([], TokenUsage())
 
     asyncio.run(generate_comic(service, topics, "123456", "umo"))
 
-    llm_analyzer.analyze_comic_storyboards.assert_awaited_once_with(
-        topics,
-        "umo",
-        persona_id="persona-a",
-        prompt_template="角色模板",
-    )
+    analyze.assert_awaited_once()
+    assert analyze.await_args.args == (topics, "umo")
+    assert analyze.await_args.kwargs["persona_id"] == "persona-a"
+    prompt = analyze.await_args.kwargs["prompt_template"]
+    assert character_template in prompt
+    assert "绘图模型将收到" not in prompt
+    assert "具体外观由参考图决定" not in prompt
+    if has_reference:
+        extra_rule = prompt.replace(character_template, "")
+        assert "保留人格或角色设定中明确写出的外貌" in extra_rule
+        assert "不要从语气推测外貌" in extra_rule
+        assert "不要在 scene 中描述或提及附件" in extra_rule
 
 
-def test_comic_character_schema_has_storyboard_prompt_default():
-    """新建角色方案时应自带可编辑的默认分镜提示词。"""
+def test_new_comic_character_uses_style_settings_by_default():
+    """新角色留空，由漫画风格方案提供默认正文。"""
     schema = json.loads(
         (Path(__file__).parents[1] / "_conf_schema.json").read_text(encoding="utf-8")
     )
     character_prompt = schema["daily_comic"]["items"]["comic_characters"]["templates"][
         "character"
     ]["items"]["storyboard_prompt"]["default"]
-    global_prompt = schema["prompts"]["items"]["comic_analysis_prompts"]["items"][
-        "comic_storyboard_prompt"
-    ]["default"]
-
     assert schema["daily_comic"]["items"]["comic_characters"]["default"] == []
-    assert character_prompt.strip()
-    assert character_prompt == global_prompt
+    assert character_prompt == ""
+    assert schema["daily_comic"]["items"]["comic_styles"]["default"][0]["preset_id"] == "classic"
 
 
 def test_daily_random_character_is_stable_and_recovers_from_disabled_choice(
@@ -692,7 +671,7 @@ def test_upgrade_config_backup_requires_schema_change(tmp_path: Path):
         ),
         encoding="utf-8",
     )
-    config_manager_class._get_plugin_root = staticmethod(lambda: plugin_root)
+    config_manager_class.get_plugin_root = staticmethod(lambda: plugin_root)
 
     class Config(dict):
         save_config = Mock()
@@ -762,7 +741,7 @@ def test_t2i_rendering_strategies_explicitly_set_desktop_viewport():
 
 def test_t2i_viewport_fallback_respects_numeric_template_meta():
     """固定数字 meta 应优先于插件兜底视口。"""
-    options, description = ReportGenerator._resolve_t2i_viewport_options(
+    options, description = ReportGenerator.resolve_t2i_viewport_options(
         '<meta name="viewport" content="width=980, height=590">',
         {"viewport_width": 1440, "viewport_height": 900},
     )
@@ -774,7 +753,7 @@ def test_t2i_viewport_fallback_respects_numeric_template_meta():
 
 def test_t2i_viewport_fallback_only_fills_missing_meta_dimension():
     """模板只指定宽度时，插件只补充高度兜底。"""
-    options, description = ReportGenerator._resolve_t2i_viewport_options(
+    options, description = ReportGenerator.resolve_t2i_viewport_options(
         '<meta name="viewport" content="width=980, initial-scale=1">',
         {"viewport_width": 1440, "viewport_height": 900},
     )
@@ -823,15 +802,15 @@ def test_comic_is_skipped_without_valid_topics():
             get_enable_daily_comic=Mock(return_value=True),
             get_report_delivery_mode=Mock(return_value="source_group"),
         ),
-        _comic_group_tasks={},
+        comic_group_tasks={},
         _background_tasks=set(),
-        _trigger_comic_generation=AsyncMock(),
+        trigger_comic_generation=AsyncMock(),
     )
 
     trigger_comic(plugin, "123456", "onebot-main", {"topics": [{"topic": ""}]})
 
-    plugin._trigger_comic_generation.assert_not_called()
-    assert plugin._comic_group_tasks == {}
+    plugin.trigger_comic_generation.assert_not_called()
+    assert plugin.comic_group_tasks == {}
     assert plugin._background_tasks == set()
 
 
@@ -845,9 +824,9 @@ def test_comic_generation_observes_comic_group_filter():
             get_report_delivery_mode=Mock(return_value="source_group"),
             is_comic_group_allowed=Mock(return_value=False),
         ),
-        _comic_group_tasks={},
+        comic_group_tasks={},
         _background_tasks=set(),
-        _trigger_comic_generation=AsyncMock(),
+        trigger_comic_generation=AsyncMock(),
     )
 
     status = trigger_comic(
@@ -861,8 +840,8 @@ def test_comic_generation_observes_comic_group_filter():
     plugin.config_manager.is_comic_group_allowed.assert_called_once_with(
         "onebot-main:GroupMessage:123456", True
     )
-    plugin._trigger_comic_generation.assert_not_called()
-    assert plugin._comic_group_tasks == {}
+    plugin.trigger_comic_generation.assert_not_called()
+    assert plugin.comic_group_tasks == {}
     assert plugin._background_tasks == set()
 
 
@@ -876,9 +855,9 @@ def test_auto_comic_switch_skips_report_trigger():
             get_enable_auto_daily_comic=Mock(return_value=False),
             is_comic_group_allowed=Mock(return_value=True),
         ),
-        _comic_group_tasks={},
+        comic_group_tasks={},
         _background_tasks=set(),
-        _trigger_comic_generation=AsyncMock(),
+        trigger_comic_generation=AsyncMock(),
     )
 
     status = trigger_comic(
@@ -890,7 +869,7 @@ def test_auto_comic_switch_skips_report_trigger():
 
     assert status == "auto_disabled"
     plugin.config_manager.is_comic_group_allowed.assert_not_called()
-    plugin._trigger_comic_generation.assert_not_called()
+    plugin.trigger_comic_generation.assert_not_called()
 
 
 def test_standalone_comic_command_is_decoupled_from_analysis_permission():
@@ -1114,6 +1093,11 @@ def _comic_config_manager(**overrides):
     """构造 generate_comic 所需的配置替身。"""
     defaults = {
         "get_enable_daily_comic": Mock(return_value=True),
+        "get_enable_auto_daily_comic": Mock(return_value=True),
+        "is_comic_group_allowed": Mock(return_value=True),
+        "get_report_template": Mock(return_value="default"),
+        "get_show_report_caption": Mock(return_value=True),
+        "get_t2i_max_concurrent": Mock(return_value=1),
         "get_selected_comic_character": Mock(return_value=None),
         "get_comic_character_persona_id": Mock(return_value=""),
         "get_comic_character_storyboard_prompt": Mock(return_value=""),
@@ -1142,6 +1126,7 @@ def _comic_service(config_manager, drawing_client, **methods):
         "_generate_via_general_plugin": AsyncMock(return_value=None),
     }
     service.update(methods)
+    service["external_drawing"] = SimpleNamespace(generate_big_banana=service.pop("_generate_via_big_banana"), generate_general=service.pop("_generate_via_general_plugin"))
     from src.application.services.comic_application_service import ComicApplicationService
 
     instance = object.__new__(ComicApplicationService)
@@ -1160,16 +1145,21 @@ def test_big_banana_backend_returns_none_when_plugin_missing():
     assert result is None
 
 
-def test_big_banana_backend_returns_bytes_on_success():
-    """大香蕉绘图管线成功时应返回图片字节并带上参考图。"""
+@pytest.mark.parametrize("converted_count", [0, 1, 2])
+def test_big_banana_backend_counts_converted_reference_images(converted_count):
+    """大香蕉提示词应匹配成功转换并交给绘图管线的图片数量。"""
     generate = load_comic_service_method("_generate_via_big_banana")
+    scene = "The protagonist wears a blue flower."
+    reference_bytes = [b"reference-0", b"reference-1"]
 
     class FakeImageResource:
         """模拟大香蕉解析参考图后使用的最小图片资源对象。"""
 
         @staticmethod
-        def from_bytes(data_bytes: bytes) -> SimpleNamespace:
-            return SimpleNamespace(bytes=data_bytes, mime="image/png")
+        def from_bytes(data_bytes: bytes) -> SimpleNamespace | None:
+            if data_bytes in reference_bytes[:converted_count]:
+                return SimpleNamespace(bytes=data_bytes, mime="image/png")
+            return None
 
     async def scenario():
         pipeline = SimpleNamespace(
@@ -1193,15 +1183,28 @@ def test_big_banana_backend_returns_bytes_on_success():
 
         result = await generate(
             service,
-            "prompt",
-            [(b"\x89PNG\r\n\x1a\nimage", "image/png")],
+            scene,
+            [(data, "image/png") for data in reference_bytes],
         )
 
         assert result == b"comic-img"
         pipeline.run.assert_awaited_once()
         params, image_list = pipeline.run.call_args[0]
         assert params["aspect_ratio"] == "16:9"
-        assert len(image_list) == 1
+        assert [image.bytes for image in image_list or []] == reference_bytes[
+            :converted_count
+        ]
+        prompt = params["prompt"]
+        if converted_count == 0:
+            assert prompt == scene
+        else:
+            prefix = (
+                "The attached image shows"
+                if converted_count == 1
+                else "The attached images show"
+            )
+            assert prompt.startswith(f"{prefix} the recurring protagonist")
+            assert scene in prompt
 
     asyncio.run(scenario())
 
@@ -1311,8 +1314,8 @@ def test_generate_comic_prefers_big_banana_backend():
 
         assert comic_bytes == b"comic-bytes"
         assert fallback_url is None
-        service._generate_via_big_banana.assert_awaited_once()
-        service._generate_via_general_plugin.assert_not_called()
+        service.external_drawing.generate_big_banana.assert_awaited_once()
+        service.external_drawing.generate_general.assert_not_called()
         drawing_client.generate_image.assert_not_called()
 
     asyncio.run(scenario())
@@ -1342,8 +1345,8 @@ def test_generate_comic_prefers_general_plugin_backend():
 
         assert comic_bytes == b"comic-bytes"
         assert fallback_url is None
-        service._generate_via_general_plugin.assert_awaited_once()
-        service._generate_via_big_banana.assert_not_called()
+        service.external_drawing.generate_general.assert_awaited_once()
+        service.external_drawing.generate_big_banana.assert_not_called()
         drawing_client.generate_image.assert_not_called()
 
     asyncio.run(scenario())
@@ -1449,6 +1452,11 @@ def test_generate_comic_rejects_builtin_response_identical_to_reference_image():
             drawing_client,
             _fetch_reference_image=AsyncMock(return_value=(reference, "image/png")),
         )
+        scene = "Zar has straight shoulder-length charcoal hair."
+        service.llm_analyzer.analyze_comic_storyboards.return_value = (
+            [{"scene": scene}],
+            TokenUsage(),
+        )
 
         comic_bytes, fallback_url = await generate_comic(
             service,
@@ -1459,6 +1467,9 @@ def test_generate_comic_rejects_builtin_response_identical_to_reference_image():
 
         assert comic_bytes is None
         assert fallback_url is None
+        drawing_client.generate_image.assert_awaited_once_with(
+            scene, images_data=[(reference, "image/png")]
+        )
 
     asyncio.run(scenario())
 
@@ -1483,7 +1494,7 @@ def test_comic_delivery_sniffs_cached_file_extension_after_generation(tmp_path):
     发送、相册上传的完整路径，确保 JPEG 不会因旧的 ``get_drawing_output_format``
     回退逻辑触发 AttributeError 或被错误保存为 PNG。
     """
-    trigger_comic = load_main_method("_trigger_comic_generation")
+    trigger_comic = load_main_method("trigger_comic_generation")
     detect_image_ext = load_main_method("_detect_image_ext")
     trigger_comic.__globals__["StarTools"] = SimpleNamespace(
         get_data_dir=Mock(return_value=tmp_path)
@@ -1502,8 +1513,8 @@ def test_comic_delivery_sniffs_cached_file_extension_after_generation(tmp_path):
         comic_service=SimpleNamespace(
             generate_comic=AsyncMock(return_value=(comic_bytes, None))
         ),
-        bot_manager=SimpleNamespace(get_adapter=Mock(return_value=adapter)),
-        _try_upload_image=AsyncMock(),
+        bot_manager=SimpleNamespace(get_adapter=Mock(return_value=adapter), resolve_platform_id=Mock(return_value="onebot")),
+        try_upload_image=AsyncMock(),
     )
 
     asyncio.run(trigger_comic(plugin, [{"topic": "测试"}], "123456", "onebot", "umo"))
@@ -1511,14 +1522,14 @@ def test_comic_delivery_sniffs_cached_file_extension_after_generation(tmp_path):
     sent_path = adapter.send_image.await_args.args[1]
     assert sent_path.endswith(".jpg")
     assert Path(sent_path).exists()
-    plugin._try_upload_image.assert_awaited_once_with(
+    plugin.try_upload_image.assert_awaited_once_with(
         "123456", sent_path, "onebot", is_comic=True
     )
 
 
 def test_comic_album_upload_sniffs_local_cached_image_extension(tmp_path):
     """漫画相册上传应从本地缓存内容识别格式，而不是默认标记为 PNG。"""
-    upload_image = load_main_method("_try_upload_image")
+    upload_image = load_main_method("try_upload_image")
     detect_image_ext = load_main_method("_detect_image_ext")
     image_path = tmp_path / "comic_cache" / "comic.jpg"
     image_path.parent.mkdir()
@@ -1526,6 +1537,8 @@ def test_comic_album_upload_sniffs_local_cached_image_extension(tmp_path):
     adapter = SimpleNamespace(
         get_group_info=AsyncMock(return_value=None),
         upload_group_album=AsyncMock(),
+        find_album_id=AsyncMock(),
+        get_group_album_list=AsyncMock(),
     )
     plugin = SimpleNamespace(
         config_manager=SimpleNamespace(
@@ -1658,22 +1671,24 @@ def test_comic_legacy_prompt_auto_migration(tmp_path: Path):
     )
 
     config_manager_class = load_config_manager_class(tmp_path)
+    legacy_prompt = (Path(__file__).parent / "fixtures" / "legacy_comic_storyboard_prompt.txt").read_text(encoding="utf-8")
+    edited_prompt = legacy_prompt + "\n保留我追加的水彩风规则。"
 
     raw_config = {
         "prompts": {
             "comic_analysis_prompts": {
-                "comic_storyboard_prompt": '你是一个资深的漫画分镜师与 AI 绘画提示词专家。\n【核心视觉、台词与双层排版规则】\n请输出包含 "scene" 字段的 JSON 对象。'
+                "comic_storyboard_prompt": legacy_prompt
             }
         },
         "daily_comic": {
             "comic_characters": [
                 {
                     "name": "旧人设",
-                    "storyboard_prompt": '你是一个资深的漫画分镜师与 AI 绘画提示词专家。\n【核心视觉、台词与双层排版规则】\n请输出包含 "scene" 字段的 JSON 对象。',
+                    "storyboard_prompt": legacy_prompt,
                 },
                 {
                     "name": "自定义人设",
-                    "storyboard_prompt": "我的完全自定义专属提示词，不应被覆盖",
+                    "storyboard_prompt": edited_prompt,
                 },
             ]
         },
@@ -1700,6 +1715,6 @@ def test_comic_legacy_prompt_auto_migration(tmp_path: Path):
     # 3. 用户的自定义专属提示词必须完好保留
     assert (
         raw_config["daily_comic"]["comic_characters"][1]["storyboard_prompt"]
-        == "我的完全自定义专属提示词，不应被覆盖"
+        == edited_prompt
     )
     config_instance.save_config.assert_called()

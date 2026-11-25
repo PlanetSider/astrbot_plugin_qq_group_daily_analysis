@@ -20,7 +20,14 @@ from ..domain.value_objects.task_status import TaskStatus
 from .constants import PROCESS_BOOT_ID, PROCESS_PID, AnalysisStage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Coroutine, Generator, Mapping
+    from collections.abc import (
+        AsyncGenerator,
+        Callable,
+        Coroutine,
+        Generator,
+        Mapping,
+        Sequence,
+    )
     from pathlib import Path
 
     from ..application.services.task_lifecycle_service import TaskLifecycleService
@@ -141,6 +148,21 @@ class ActiveTaskSnapshot(TypedDict):
 # Trace ID 中群名的最大长度（平衡可读性和日志宽度）
 _MAX_GROUP_NAME_LEN = 10
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def strip_control_characters(value: str) -> str:
+    """移除 C0/DEL 控制字符，保留其余文本和业务标识。
+
+    Args:
+        value: 用于构建文件名片段的原始文本。
+
+    Returns:
+        不含 C0/DEL 的文本，不负责路径校验或长度限制。
+    """
+    return _CONTROL_CHARS.sub("", str(value))
+
+
 # 用于匹配报告 Caption 中去重 Token 的正则模式
 REPORT_CAPTION_PATTERN = re.compile(r"\| (\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 
@@ -200,10 +222,10 @@ class TraceContext:
     stack_trace: str | None = None
 
     # 扩展元数据
-    metadata: dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict[str, object])
 
     # 细粒度 Span 列表
-    _spans: list[SpanRecord] = field(default_factory=list, init=False)
+    _spans: list[SpanRecord] = field(default_factory=list[SpanRecord], init=False)
 
     # dsh-context 上下文演进指标
     _context_metrics: TraceContextMetrics | None = field(default=None, init=False)
@@ -215,6 +237,21 @@ class TraceContext:
     _init_memory_mb: float = field(default=0.0, init=False)
     _peak_memory_mb: float = field(default=0.0, init=False)
     _final_memory_mb: float = field(default=0.0, init=False)
+
+    @property
+    def context_metrics(self) -> TraceContextMetrics | None:
+        """提供任务详情展示所需的上下文指标。"""
+        return self._context_metrics
+
+    @property
+    def token_usage(self) -> TraceTokenUsage:
+        """提供任务详情展示所需的 Token 消耗。"""
+        return self._token_usage
+
+    @property
+    def spans(self) -> Sequence[SpanRecord]:
+        """提供已记录阶段的只读序列视图，供诊断和报告组件关联阶段。"""
+        return self._spans
 
     def __post_init__(self) -> None:
         init_rss = _get_process_rss_mb() if self._enable_metrics else 0.0
@@ -239,8 +276,12 @@ class TraceContext:
     )
 
     # 传统锚点兼容
-    _checkpoints: dict[str, datetime] = field(default_factory=dict, init=False)
-    _token: Token | None = field(default=None, init=False, repr=False)
+    _checkpoints: dict[str, datetime] = field(
+        default_factory=dict[str, datetime], init=False
+    )
+    _token: Token[TraceContext | None] | None = field(
+        default=None, init=False, repr=False
+    )
 
     @classmethod
     def set_metrics_enabled(cls, enabled: bool) -> None:
@@ -870,7 +911,9 @@ class TraceContext:
         if prefix:
             parts.append(prefix)
         if group_name:
-            safe_name = re.sub(r'[\s\n\r\t/\\:*?"<>|\[\]{}]', "", str(group_name))
+            safe_name = re.sub(
+                r'[\s/\\:*?"<>|\[\]{}]', "", strip_control_characters(group_name)
+            )
             safe_name = safe_name[:_MAX_GROUP_NAME_LEN]
             if safe_name:
                 parts.append(safe_name)
@@ -947,6 +990,18 @@ class TraceContext:
                 _active_traces.pop(ctx.trace_id, None)
             raise
         return ctx
+
+    @staticmethod
+    def bind_current(trace: TraceContext) -> Token[TraceContext | None]:
+        """为独立后台协程绑定已有追踪，不重复创建任务或写入快照。
+
+        Args:
+            trace: 后台任务继承的追踪上下文。
+
+        Returns:
+            绑定令牌；调用方若在同一协程临时切换，可用它恢复上下文。
+        """
+        return _current_trace.set(trace)
 
     @classmethod
     def get(cls) -> str:

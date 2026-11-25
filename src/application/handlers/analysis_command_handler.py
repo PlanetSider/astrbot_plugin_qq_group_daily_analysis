@@ -13,7 +13,6 @@ import tempfile
 import time
 from contextlib import nullcontext
 from datetime import datetime
-from inspect import isawaitable
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar, cast
 from urllib.parse import quote
@@ -24,12 +23,15 @@ from astrbot.core.message.components import File
 from ...domain.repositories.platform_adapter_repository import (
     GroupAlbumSupportProtocol,
     GroupFileSupportProtocol,
+    MarkdownImageSupportProtocol,
     PlatformAdapterProtocol,
 )
 from ...domain.value_objects.task_event import TaskEvent
 from ...infrastructure.reporting.html_renderer import bind_group_html_renderer
+from ...infrastructure.reporting.report_image import save_report_image
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
-from ...shared.trace_context import TraceContext
+from ...shared.trace_context import TraceContext, strip_control_characters
+from ...shared.type_guards import is_object_list, is_string_mapping
 from ...utils.logger import logger
 from ..services.analysis_application_service import (
     AnalysisApplicationService,
@@ -69,12 +71,12 @@ class AnalysisStoppedError(BaseException):
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Coroutine
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine
 
     from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-    from ...domain.repositories.plugin_host_repository import PluginHostProtocol
     from ...domain.value_objects import AnalysisResultPayload
+    from ...entrypoints.plugin_host import PluginHostProtocol
     from ...infrastructure.config.config_manager import ConfigManager
     from ...infrastructure.messaging.message_sender import MessageSender
     from ...infrastructure.persistence.trace_sqlite_store import TraceSQLiteStore
@@ -93,14 +95,13 @@ class AnalysisCommandHandler:
     bot_manager: BotManager
     analysis_service: AnalysisApplicationService
     report_generator: ReportGenerator
-    html_render: Callable
+    html_render: Callable[..., Awaitable[str | bytes | None]]
     active_task_manager: ActiveTaskManager | None
     trace_store: TraceSQLiteStore | None
     message_sender: MessageSender | None
     report_dispatcher: ReportDispatcher | None
     comic_handler: ComicCommandHandler | None
     plugin_data_dir: Path
-    plugin_instance: PluginHostProtocol | None
     terminating: bool
 
     def __init__(
@@ -109,7 +110,7 @@ class AnalysisCommandHandler:
         bot_manager: BotManager,
         analysis_service: AnalysisApplicationService,
         report_generator: ReportGenerator,
-        html_render: Callable,
+        html_render: Callable[..., Awaitable[str | bytes | None]],
         active_task_manager: ActiveTaskManager | None = None,
         trace_store: TraceSQLiteStore | None = None,
         message_sender: MessageSender | None = None,
@@ -132,7 +133,6 @@ class AnalysisCommandHandler:
         self.plugin_data_dir = (
             plugin_data_dir or Path.cwd() / "data" / "plugin_data" / PLUGIN_NAME
         )
-        self.plugin_instance = plugin_instance
         self.stop_watcher_factory = stop_watcher_factory
         self.terminating: bool = False
 
@@ -200,7 +200,14 @@ class AnalysisCommandHandler:
                 yield event.plain_result("❌ 此群未启用日常分析功能")
                 return
 
-            if self.analysis_service.is_group_running(group_id, "daily"):
+            platform_id = self.bot_manager.resolve_platform_id(platform_id)
+
+            if self.analysis_service.is_group_running(
+                group_id, "daily", platform_id
+            ) or (
+                self.active_task_manager is not None
+                and self.active_task_manager.is_analysis_running(group_id, platform_id)
+            ):
                 yield event.plain_result("📊 该群的分析任务正在执行中，请稍后再试哦~")
                 return
 
@@ -504,7 +511,7 @@ class AnalysisCommandHandler:
         raw_analysis = result.get("analysis_result")
         analysis_result = cast(
             "AnalysisResultPayload",
-            raw_analysis if isinstance(raw_analysis, dict) else {},
+            raw_analysis if is_string_mapping(raw_analysis) else {},
         )
         raw_adapter = result.get("adapter")
         adapter = cast("PlatformAdapterProtocol | None", raw_adapter)
@@ -543,9 +550,7 @@ class AnalysisCommandHandler:
             logger.warning(f"群 {group_id} 未找到对应的平台适配器，无法发送报告")
             return
 
-        comic_handler = self.comic_handler or (
-            self.plugin_instance.comic_command_handler if self.plugin_instance else None
-        )
+        comic_handler = self.comic_handler
         if comic_handler:
             if stop_request is None:
                 comic_handler.try_trigger_comic_generation(
@@ -605,10 +610,7 @@ class AnalysisCommandHandler:
 
         trace = TraceContext.current()
         override_theme = trace.metadata.get("override_template_name") if trace else None
-        tpl_getter = getattr(self.config_manager, "get_report_template", None)
-        raw_theme = override_theme or (
-            tpl_getter() if callable(tpl_getter) else "default"
-        )
+        raw_theme = override_theme or self.config_manager.get_report_template()
         template_theme = str(raw_theme) if raw_theme else "default"
 
         if output_format == "image":
@@ -644,24 +646,12 @@ class AnalysisCommandHandler:
                 raise AnalysisStoppedError
 
             if image_url:
-                save_history = getattr(
-                    self.plugin_instance, "_save_report_to_history", None
+                await asyncio.to_thread(
+                    self.save_report_to_history,
+                    image_url,
+                    group_id,
+                    trace_id=trace.trace_id if trace else None,
                 )
-                cur_tid = trace.trace_id if trace else None
-                if callable(save_history):
-                    try:
-                        await asyncio.to_thread(
-                            save_history, image_url, group_id, trace_id=cur_tid
-                        )
-                    except TypeError:
-                        await asyncio.to_thread(save_history, image_url, group_id)
-                else:
-                    await asyncio.to_thread(
-                        self._save_report_to_history,
-                        image_url,
-                        group_id,
-                        trace_id=cur_tid,
-                    )
 
                 caption = (
                     TraceContext.make_report_caption()
@@ -672,15 +662,7 @@ class AnalysisCommandHandler:
                 if sent:
                     if stop_request is not None and stop_request.refresh():
                         raise AnalysisStoppedError
-                    upload_img = getattr(
-                        self.plugin_instance, "_try_upload_image", None
-                    )
-                    if callable(upload_img):
-                        res = upload_img(group_id, image_url, platform_id)
-                        if isawaitable(res):
-                            await res
-                    else:
-                        await self._try_upload_image(group_id, image_url, platform_id)
+                    await self.try_upload_image(group_id, image_url, platform_id)
                     return
 
             logger.warning(f"图片报告发送失败，正在发送文本回退报告。群: {group_id}")
@@ -722,7 +704,7 @@ class AnalysisCommandHandler:
                 yield event.plain_result("⚠️ HTML 生成失败。")
 
         else:
-            await self._send_text_reports(
+            await self.send_text_reports(
                 group_id, analysis_result, is_qq_official, adapter, stop_request
             )
 
@@ -792,7 +774,7 @@ class AnalysisCommandHandler:
                     raise AnalysisStoppedError
                 yield event.plain_result(caption)
 
-    async def _send_text_reports(
+    async def send_text_reports(
         self,
         group_id: str,
         analysis_result: AnalysisResultPayload,
@@ -812,9 +794,7 @@ class AnalysisCommandHandler:
         try:
             if stop_request is not None and stop_request.refresh():
                 raise AnalysisStoppedError
-            if is_qq_official and hasattr(
-                self.report_generator, "generate_markdown_report"
-            ):
+            if is_qq_official:
                 (
                     text_report,
                     fallback_report,
@@ -825,6 +805,9 @@ class AnalysisCommandHandler:
                             self.html_render, group_id, adapter.platform_id
                         ),
                         mention_style="qq",
+                        summary_image_uploader=adapter.upload_markdown_image
+                        if isinstance(adapter, MarkdownImageSupportProtocol)
+                        else None,
                     ),
                     stop_request,
                 )
@@ -843,7 +826,7 @@ class AnalysisCommandHandler:
         except Exception as e:
             logger.error(f"发送纯文本报告失败 (群 {group_id}): {e}", exc_info=True)
 
-    def _save_report_to_history(
+    def save_report_to_history(
         self, image_url: str, group_id: str, trace_id: str | None = None
     ) -> Path | None:
         """将生成的图片报告副本保存到持久化 reports 目录并关联 Trace 链路。
@@ -861,21 +844,17 @@ class AnalysisCommandHandler:
             reports_dir.mkdir(parents=True, exist_ok=True)
             ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             cur_trace = TraceContext.current()
-            eff_trace_id = trace_id or (cur_trace.trace_id if cur_trace else "")
+            eff_trace_id = strip_control_characters(
+                trace_id or (cur_trace.trace_id if cur_trace else "")
+            )
             trace_suffix = f"_{eff_trace_id}" if eff_trace_id else ""
             dest = reports_dir / f"report_{group_id}_{ts_str}{trace_suffix}.jpg"
-            if Path(image_url).exists():
-                import shutil
-
-                shutil.copy2(image_url, dest)
-            elif image_url.startswith("base64://"):
-                data = base64.b64decode(image_url[9:])
-                dest.write_bytes(data)
+            dest = save_report_image(image_url, dest)
 
             if cur_trace:
                 rfiles = cur_trace.metadata.setdefault("report_files", [])
-                if isinstance(rfiles, list) and not any(
-                    isinstance(rf, dict) and rf.get("filename") == dest.name
+                if is_object_list(rfiles) and not any(
+                    is_string_mapping(rf) and rf.get("filename") == dest.name
                     for rf in rfiles
                 ):
                     rfiles.append(
@@ -896,7 +875,7 @@ class AnalysisCommandHandler:
             logger.warning(f"保存历史报告副本失败: {e}")
             return None
 
-    async def _try_upload_image(
+    async def try_upload_image(
         self,
         group_id: str,
         image_url: str,
@@ -942,7 +921,9 @@ class AnalysisCommandHandler:
         try:
             group_info = await adapter.get_group_info(group_id)
             if group_info and group_info.group_name:
-                safe_name = re.sub(r'[\\/:*?"<>|]', "", group_info.group_name).strip()
+                safe_name = re.sub(
+                    r'[\\/:*?"<>|]', "", strip_control_characters(group_info.group_name)
+                ).strip()
                 if safe_name:
                     filename_stem = f"群分析报告_{safe_name}_{date_str}_{timestamp}"
         except Exception:

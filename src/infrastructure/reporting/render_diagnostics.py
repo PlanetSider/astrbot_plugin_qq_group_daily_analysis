@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Literal, Required, TypedDict
 
 import ulid
 
-from ...shared.trace_context import TraceContext
+from ...shared.trace_context import TraceContext, strip_control_characters
+from ...shared.type_guards import is_object_list, is_string_mapping
 from ...utils.template_utils import render_template
 
 if TYPE_CHECKING:
@@ -31,9 +32,11 @@ class RenderAttemptRecord(TypedDict, total=False):
     attempt: int
     strategy_name: str
     priority: int | None
-    service_type: Literal["astrbot", "custom"]
+    service_type: Literal["astrbot", "custom", "typst"]
     font_mode: FontMode
     resource_environment: str
+    execution_location: str
+    asset_policy: str
     resource_urls: RenderingResourceConfig | None
     render_timeout_ms: int | None
     request_timeout_ms: int | None
@@ -98,9 +101,9 @@ def diagnose_non_image_payload(data: bytes) -> str:
         payload = json.loads(text)
     except ValueError:
         payload = None
-    if isinstance(payload, (dict, list)):
+    if is_string_mapping(payload) or is_object_list(payload):
         response_kind = "JSON"
-        if isinstance(payload, dict):
+        if is_string_mapping(payload):
             detail = (
                 payload.get("detail") or payload.get("error") or payload.get("message")
             )
@@ -158,7 +161,7 @@ def resolve_t2i_viewport_options(
     """
     resolved_options = image_options.copy()
     head_snippet = html_content[:4096]
-    descriptions = []
+    descriptions: list[str] = []
     for dimension, option_key in (
         ("width", "viewport_width"),
         ("height", "viewport_height"),
@@ -226,7 +229,7 @@ def build_safe_report_path(
         "group_id": group_id,
         "date": date,
         "ulid": generated_ulid,
-        "trace_id": str(trace_id or TraceContext.get() or ""),
+        "trace_id": strip_control_characters(trace_id or TraceContext.get() or ""),
     }
 
     try:
@@ -238,7 +241,7 @@ def build_safe_report_path(
         raise ValueError("文件名格式不得为绝对路径")
 
     relative_path = Path(formatted)
-    sanitized_parts = []
+    sanitized_parts: list[str] = []
     for part in relative_path.parts:
         if part in {".", ".."}:
             raise ValueError("路径中不得包含 '.' 或 '..'。")
@@ -253,7 +256,10 @@ def build_safe_report_path(
     except ValueError as e:
         raise ValueError("文件路径不在输出目录之内，可能包含路径穿越") from e
 
-    if target_path.exists():
+    # 未包含任务或随机身份的自定义格式也必须在文件写入前区分并发任务。
+    if target_path.exists() or (
+        generated_ulid not in target_path.name and "${trace_id}" not in filename_format
+    ):
         suffix = target_path.suffix
         stem = target_path.stem
         target_path = target_path.with_name(f"{stem}_{generated_ulid}{suffix}")

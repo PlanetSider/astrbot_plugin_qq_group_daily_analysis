@@ -1,0 +1,84 @@
+import { useCallback, useState, useRef, useEffect } from "react";
+import type { Key } from "react";
+import {
+  fetchManagedRecord,
+  mutateManagedRecord,
+  recordKey,
+  type RecordLocator,
+} from "@/entities/plugin-data/api/managedRecordsApi";
+
+export function useRecordSelection(locators: RecordLocator[], onChanged: () => void) {
+  const removing = useRef(false);
+  const generation = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      generation.current += 1;
+    };
+  }, []);
+  const [selected, setSelected] = useState<RecordLocator[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<{
+    deleted: number;
+    failed: { name: string; message: string }[];
+  } | null>(null);
+  const select = (keys: Key[]) => {
+    const known = new Map(
+      [...selected, ...locators].map((locator) => [recordKey(locator), locator]),
+    );
+    setSelected(
+      keys
+        .slice(0, 200)
+        .flatMap((key) => (known.get(String(key)) ? [known.get(String(key))!] : [])),
+    );
+  };
+  const clear = useCallback(() => {
+    generation.current += 1;
+    setSelected([]);
+    setResult(null);
+  }, []);
+  const remove = async (targets = selected) => {
+    if (removing.current || !targets.length) return;
+    removing.current = true;
+    const request = generation.current;
+    setBusy(true);
+    setProgress(0);
+    setResult(null);
+    const failed: { name: string; message: string }[] = [];
+    const deleted = new Set<string>();
+    for (const locator of targets) {
+      try {
+        const record = await fetchManagedRecord(locator);
+        await mutateManagedRecord({
+          locator: record.locator,
+          revision: record.revision,
+          operation: "delete",
+        });
+        deleted.add(recordKey(locator));
+      } catch (cause) {
+        failed.push({
+          name:
+            locator.key ||
+            locator.batch_id ||
+            `${locator.group_id} ${locator.date_str} ${locator.stage_name}`,
+          message: cause instanceof Error ? cause.message : "删除失败",
+        });
+      }
+      if (mounted.current && generation.current === request) setProgress((value) => value + 1);
+    }
+    removing.current = false;
+    if (!mounted.current) return;
+    setBusy(false);
+    if (generation.current === request) {
+      setSelected((current) => current.filter((locator) => !deleted.has(recordKey(locator))));
+      setResult({ deleted: deleted.size, failed });
+      onChanged();
+    }
+  };
+  return { selected, keys: selected.map(recordKey), select, busy, progress, result, remove, clear };
+}
+
+export { recordKey } from "@/entities/plugin-data/api/managedRecordsApi";

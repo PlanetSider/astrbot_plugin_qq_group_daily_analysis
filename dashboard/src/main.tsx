@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { App } from "./app/App";
+import { App } from "@/app/App";
+import "@/app/styles.css";
 
 const mount = () => {
   const rootEl = document.getElementById("root");
@@ -8,7 +9,7 @@ const mount = () => {
     ReactDOM.createRoot(rootEl).render(
       <React.StrictMode>
         <App />
-      </React.StrictMode>
+      </React.StrictMode>,
     );
   }
 };
@@ -18,4 +19,3 @@ if (document.readyState === "loading") {
 } else {
   mount();
 }
-

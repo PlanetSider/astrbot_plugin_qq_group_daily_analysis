@@ -10,6 +10,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.infrastructure.reporting.generators import ReportGenerator
 from src.shared.trace_context import TraceContext
 
@@ -52,7 +54,7 @@ def build_generator(output_dir, filename_format, html=NO_HEAD_HTML):
     async def fake_prepare_render_data(*args, **kwargs):
         return {}
 
-    generator._prepare_render_data = fake_prepare_render_data
+    generator.prepare_render_data = fake_prepare_render_data
     return generator
 
 
@@ -77,6 +79,29 @@ def test_filename_format_applies_when_trace_context_active(tmp_path):
     assert "report_344184506_" not in Path(html_path).name
 
 
+def test_parallel_report_paths_are_unique_before_either_file_is_written(tmp_path):
+    from src.infrastructure.reporting.render_diagnostics import build_safe_report_path
+    first = build_safe_report_path(tmp_path, "${group_id}/${date}.html", "123", "2026-11-07", "first")
+    second = build_safe_report_path(tmp_path, "${group_id}/${date}.html", "123", "2026-11-07", "second")
+    assert first != second
+    assert first.parent == second.parent == tmp_path / "123"
+    assert not first.exists() and not second.exists()
+
+
+def test_forwarded_report_temp_paths_do_not_collide_for_same_group():
+    from src.infrastructure.reporting.dispatcher import ReportDispatcher
+    dispatcher = object.__new__(ReportDispatcher)
+    first = dispatcher._save_image_to_temp("base64://aW1hZ2U=", "123")
+    second = dispatcher._save_image_to_temp("base64://aW1hZ2U=", "123")
+    try:
+        assert first and second and first != second
+        assert Path(first).read_bytes() == Path(second).read_bytes() == b"image"
+    finally:
+        for name in (first, second):
+            if name:
+                Path(name).unlink(missing_ok=True)
+
+
 def test_trace_id_variable_renders_bound_trace(tmp_path):
     """${trace_id} 变量在格式中可用，取当前 TraceContext 的追踪号。"""
     generator = build_generator(tmp_path, "报告_${group_id}_${trace_id}.html")
@@ -95,6 +120,29 @@ def test_explicit_trace_id_wins_over_ambient_context(tmp_path):
 
     assert html_path is not None
     assert Path(html_path).name == "报告_report_source_trace.html"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_html_filename_strips_legacy_controls_but_meta_retains_original_id(
+    tmp_path, explicit
+):
+    original_trace = "legacy_\x11日常\x10交流群\x7f_end"
+    generator = build_generator(tmp_path, "报告_${trace_id}.html", WITH_HEAD_HTML)
+    with TraceContext(trace_id=AMBIENT_TRACE if explicit else original_trace) as trace:
+        html_path, _ = asyncio.run(
+            generator.generate_html_report(
+                ANALYSIS_RESULT,
+                "344184506",
+                trace_id=original_trace if explicit else None,
+            )
+        )
+        assert trace.trace_id == (AMBIENT_TRACE if explicit else original_trace)
+
+    assert html_path is not None
+    path = Path(html_path)
+    assert path.name == "报告_legacy_日常交流群_end.html"
+    assert path.parent == tmp_path
+    assert f'content="{original_trace}"' in path.read_text(encoding="utf-8")
 
 
 def test_custom_filename_still_has_highest_priority(tmp_path):

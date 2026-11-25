@@ -17,7 +17,7 @@ async def test_rewrite_records_actual_prompt_and_final_error(monkeypatch, image,
     service = _comic_service(
         _comic_config_manager(
             get_drawing_backend=lambda: "builtin",
-            get_drawing_reference_images=lambda: ["reference.png"],
+            get_drawing_reference_images=lambda *_args, **_kwargs: ["reference.png"],
             get_drawing_output_exception_retry_keywords=lambda: ["blocked"],
         ),
         SimpleNamespace(generate_image=AsyncMock(side_effect=[(None, "blocked"), (image, None if image else error)])),
@@ -28,6 +28,7 @@ async def test_rewrite_records_actual_prompt_and_final_error(monkeypatch, image,
     assert result == (image if image == b"comic" else None)
     assert url is None
     payload = next(span["payload"] for span in trace._spans if span["stage_name"] == "COMIC_DRAWING")
+    assert payload["reference_images_count"] == 1
     assert payload["last_error"] == error
     assert payload["prompts"]["comic_drawing"]["prompt"] == "实际重写提示词"
     assert payload["scene_prompt_len"] == len("实际重写提示词")

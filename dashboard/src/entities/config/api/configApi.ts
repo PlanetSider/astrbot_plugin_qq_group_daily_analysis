@@ -1,19 +1,29 @@
 import { z } from "zod";
-import { pluginConfigResponseSchema, pluginConfigSaveSchema } from "../model/configContract";
-import { cdnBaseUrlSchema } from "../model/renderingConfig";
-import { apiGet, apiPost, extractData } from "../../../shared/api/bridge";
-import { PluginConfigData } from "../model/types";
+import {
+  pluginConfigResponseSchema,
+  pluginConfigSaveSchema,
+} from "@/entities/config/model/configContract";
+import { cdnBaseUrlSchema } from "@/entities/config/model/renderingConfig";
+import {
+  fontTransferSchema,
+  typstFontStatusSchema,
+  type FontDownloadSource,
+  type FontTransfer,
+  type TypstFontStatus,
+} from "@/entities/config/model/typstFonts";
+import { apiGet, apiPost, extractData } from "@/shared/api/bridge";
+import { PluginConfigData } from "@/entities/config/model/types";
 import {
   t2iProbeRequestSchema,
   t2iProbeSchema,
   type T2iProbe,
   type T2iProbeInput,
-} from "../model/t2iProbe";
+} from "@/entities/config/model/t2iProbe";
 import {
   templateCdnProbeSchema,
   type TemplateCdnProbe,
   type TemplateCdnProbeRequest,
-} from "../model/cdnProbe";
+} from "@/entities/config/model/cdnProbe";
 
 export async function testTemplateCdn(baseUrl: string): Promise<TemplateCdnProbe> {
   const input = cdnBaseUrlSchema.safeParse(baseUrl);
@@ -24,31 +34,54 @@ export async function testTemplateCdn(baseUrl: string): Promise<TemplateCdnProbe
   const parsed = templateCdnProbeSchema.safeParse(data);
   if (parsed.success) return parsed.data;
 
-  const errorMessage = data && typeof data === "object" && "message" in data
-    ? data.message : response?.message;
-  throw new Error(typeof errorMessage === "string" && errorMessage
-    ? errorMessage : "没有收到检测结果，请刷新页面后重试。");
+  const errorMessage =
+    data && typeof data === "object" && "message" in data ? data.message : response?.message;
+  throw new Error(
+    typeof errorMessage === "string" && errorMessage
+      ? errorMessage
+      : "没有收到检测结果，请刷新页面后重试。",
+  );
 }
 
 export async function testT2i(input: T2iProbeInput): Promise<T2iProbe> {
-  const parsed = t2iProbeRequestSchema.safeParse({ ...input, __template_key: input.render_service === "astrbot" ? "strategy" : "custom" });
+  const parsed = t2iProbeRequestSchema.safeParse({
+    ...input,
+    __template_key:
+      input.render_service === "typst"
+        ? "typst"
+        : input.render_service === "astrbot"
+          ? "strategy"
+          : "custom",
+  });
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const response = await apiPost<unknown>("config/test-t2i", parsed.data);
   // 宿主和插件都可能返回错误信封，不能把外层 ok 当成渲染成功。
   for (const layer of [response, response?.data]) {
-    const envelope = z.object({ status: z.string().optional(), code: z.number().optional(), message: z.string().optional() }).safeParse(layer);
-    if (envelope.success && (envelope.data.status === "error" ||
-        (envelope.data.code !== undefined && ![0, 200].includes(envelope.data.code)))) {
+    const envelope = z
+      .object({
+        status: z.string().optional(),
+        code: z.number().optional(),
+        message: z.string().optional(),
+      })
+      .safeParse(layer);
+    if (
+      envelope.success &&
+      (envelope.data.status === "error" ||
+        (envelope.data.code !== undefined && ![0, 200].includes(envelope.data.code)))
+    ) {
       throw new Error(envelope.data.message || "测试没能完成，请查看 T2I 服务日志后重试。");
     }
   }
   const data = extractData<unknown>(response);
   const result = t2iProbeSchema.safeParse(data);
   if (result.success) return result.data;
-  const message = data && typeof data === "object" && "message" in data
-    ? data.message : response?.message;
-  throw new Error(typeof message === "string" && message
-    ? message : "没有收到测试图片，请查看 T2I 服务日志后重试。");
+  const message =
+    data && typeof data === "object" && "message" in data ? data.message : response?.message;
+  throw new Error(
+    typeof message === "string" && message
+      ? message
+      : "没有收到测试图片，请查看 T2I 服务日志后重试。",
+  );
 }
 
 export interface AvailableProvider {
@@ -56,6 +89,7 @@ export interface AvailableProvider {
   name: string;
   type?: string;
   label?: string;
+  provider?: string;
 }
 
 export interface AvailablePersona {
@@ -69,7 +103,9 @@ export async function fetchPluginConfig(): Promise<PluginConfigData> {
   const parsed = pluginConfigResponseSchema.safeParse(extractData<unknown>(res));
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
-    throw new Error(`配置响应结构无效（${issue.path.join(".") || "根对象"}），请检查插件版本和后端响应`);
+    throw new Error(
+      `配置响应结构无效（${issue.path.join(".") || "根对象"}），请检查插件版本和后端响应`,
+    );
   }
   return parsed.data;
 }
@@ -90,16 +126,22 @@ export async function fetchAvailablePersonas(): Promise<AvailablePersona[]> {
 
 export async function savePluginConfig(
   config: Record<string, unknown>,
-  revision?: string
+  revision?: string,
 ): Promise<{ success: boolean; message?: string; revision?: string }> {
   try {
     const input = pluginConfigSaveSchema.safeParse(config);
     if (!input.success) return { success: false, message: input.error.issues[0].message };
     const payload = input.data;
-    const res = await apiPost<unknown>("config", { config: payload, ...(revision ? { revision } : {}) });
+    const res = await apiPost<unknown>("config", {
+      config: payload,
+      ...(revision ? { revision } : {}),
+    });
     const envelope = z.object({
       status: z.string().optional(),
-      revision: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+      revision: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
       code: z.number().optional(),
       error: z.unknown().optional(),
       message: z.string().optional(),
@@ -111,8 +153,11 @@ export async function savePluginConfig(
       const parsed = envelope.safeParse(response);
       if (!parsed.success) break;
       const raw = parsed.data;
-      if (raw.status === "error" || raw.error ||
-          (raw.code !== undefined && raw.code !== 0 && raw.code !== 200)) {
+      if (
+        raw.status === "error" ||
+        raw.error ||
+        (raw.code !== undefined && raw.code !== 0 && raw.code !== 200)
+      ) {
         return { success: false, message: raw.message || "保存配置失败" };
       }
       const nested = envelope.safeParse(raw.data);
@@ -121,7 +166,11 @@ export async function savePluginConfig(
         continue;
       }
       if (raw.status === "ok" || raw.status === "success") {
-        return { success: true, message: raw.message || "配置已成功保存并持久化生效", ...(raw.revision ? { revision: raw.revision } : {}) };
+        return {
+          success: true,
+          message: raw.message || "配置已成功保存并持久化生效",
+          ...(raw.revision ? { revision: raw.revision } : {}),
+        };
       }
       break;
     }
@@ -132,9 +181,44 @@ export async function savePluginConfig(
   }
 }
 
+export async function fetchTypstFonts(): Promise<TypstFontStatus> {
+  const response = await apiGet<unknown>("config/typst-fonts");
+  const parsed = typstFontStatusSchema.safeParse(extractData(response));
+  if (!parsed.success) throw new Error(response?.message || "未能读取字体状态，请刷新重试。");
+  return parsed.data;
+}
+
+export async function downloadTypstFonts(
+  cdnBaseUrl: string,
+  theme?: string,
+  name?: string,
+  downloadId?: string,
+  source: FontDownloadSource = "cdn",
+): Promise<TypstFontStatus> {
+  const parsedCdn = cdnBaseUrlSchema.safeParse(source === "github" ? "" : cdnBaseUrl);
+  if (!parsedCdn.success) throw new Error(parsedCdn.error.issues[0].message);
+  const response = await apiPost<unknown>("config/typst-fonts/download", {
+    source,
+    ...(downloadId ? { download_id: downloadId } : {}),
+    cdn_base_url: parsedCdn.data,
+    ...(theme === undefined ? {} : { theme }),
+    ...(name === undefined ? {} : { name }),
+  });
+  const parsed = typstFontStatusSchema.safeParse(extractData(response));
+  if (!parsed.success) throw new Error(response?.message || "字体下载未完成，请检查 CDN 后重试。");
+  return parsed.data;
+}
+
+export async function fetchFontDownloadProgress(downloadId: string): Promise<FontTransfer | null> {
+  const response = await apiPost<unknown>("config/downloads/progress", { download_id: downloadId });
+  const parsed = fontTransferSchema.nullable().safeParse(extractData(response));
+  if (!parsed.success) throw new Error("无法读取下载进度，请刷新或取消后重试");
+  return parsed.data;
+}
+
 export async function uploadConfigFile(
   file: File,
-  configKey?: string
+  configKey?: string,
 ): Promise<{ path: string } | null> {
   try {
     const base64Data = await new Promise<string>((resolve, reject) => {
@@ -160,12 +244,11 @@ export async function uploadConfigFile(
 }
 
 export async function fetchConfigFileContent(
-  path: string
+  path: string,
 ): Promise<{ data_url: string; filename?: string } | null> {
-  const res = await apiGet<{ data_url?: string; filename?: string }>(
-    "config/file/content",
-    { path }
-  );
+  const res = await apiGet<{ data_url?: string; filename?: string }>("config/file/content", {
+    path,
+  });
   const data = extractData<{ data_url?: string; filename?: string }>(res);
   if (data && typeof data === "object" && data.data_url) {
     return { data_url: data.data_url, filename: data.filename };

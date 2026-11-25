@@ -1,16 +1,20 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { apiGet } from "../../../../shared/api/bridge";
-import { fetchConnectedPlatforms } from "../taskApi";
-import { mockConnectedPlatforms } from "../../../../mocks/data/tasks";
+import { apiGet } from "@/shared/api/bridge";
+import { fetchConnectedPlatforms } from "@/entities/task/api/taskApi";
+import { mockConnectedPlatforms } from "@/mocks/data/tasks";
 
-vi.mock("../../../../shared/api/bridge", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../../../shared/api/bridge")>(), apiGet: vi.fn(),
+vi.mock("@/shared/api/bridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/api/bridge")>()),
+  apiGet: vi.fn(),
 }));
 
 beforeEach(() => vi.resetAllMocks());
 
 it("读取平台实例的真实字段，支持宿主双层响应", async () => {
-  vi.mocked(apiGet).mockResolvedValue({ status: "ok", data: { status: "ok", data: mockConnectedPlatforms } });
+  vi.mocked(apiGet).mockResolvedValue({
+    status: "ok",
+    data: { status: "ok", data: mockConnectedPlatforms },
+  });
   expect(await fetchConnectedPlatforms()).toEqual(mockConnectedPlatforms);
 });
 

@@ -16,6 +16,8 @@ from ...domain.services.task_state_machine import TaskStateMachine
 from ...domain.value_objects.task_event import TaskEvent
 from ...domain.value_objects.task_status import TaskStatus
 from ...shared.constants import PROCESS_BOOT_ID, PROCESS_PID, AnalysisStage
+from ...shared.trace_context import strip_control_characters
+from ...shared.type_guards import is_object_list, is_string_mapping
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -36,7 +38,24 @@ def _load_json_object(raw: str | None) -> dict[str, object]:
         parsed = json.loads(raw or "{}")
     except (ValueError, TypeError):
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return parsed if is_string_mapping(parsed) else {}
+
+
+def _metric_number(value: object) -> str | int | float:
+    """校验指标的可转换数值，防止未知结构写入数值列。
+
+    Args:
+        value: 快照中的原始数值。
+
+    Returns:
+        数值或数字字符串，由对应字段决定转换为整数还是浮点数。
+
+    Raises:
+        TypeError: 值不是支持的数值类型。
+    """
+    if not isinstance(value, (str, int, float)):
+        raise TypeError("追踪指标必须是数值")
+    return value
 
 
 class TokenBreakdownItem(TypedDict):
@@ -86,6 +105,7 @@ class TraceSQLiteStore:
                     error_stage TEXT,
                     error_message TEXT,
                     stack_trace TEXT,
+                    acknowledged_at REAL,
                     extra_json TEXT DEFAULT '{}',
                     pid INTEGER DEFAULT 0,
                     boot_id TEXT DEFAULT ''
@@ -132,9 +152,11 @@ class TraceSQLiteStore:
                     FOREIGN KEY (trace_id) REFERENCES analysis_traces(trace_id) ON DELETE CASCADE
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_traces_started_at ON analysis_traces(started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_traces_started_id ON analysis_traces(started_at DESC, trace_id DESC);
+                DROP INDEX IF EXISTS idx_traces_started_at;
                 CREATE INDEX IF NOT EXISTS idx_traces_group_id ON analysis_traces(group_id);
-                CREATE INDEX IF NOT EXISTS idx_traces_group_started ON analysis_traces(group_id, started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_traces_group_started_id ON analysis_traces(group_id, started_at DESC, trace_id DESC);
+                DROP INDEX IF EXISTS idx_traces_group_started;
                 CREATE INDEX IF NOT EXISTS idx_traces_status ON analysis_traces(status);
                 CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON trace_spans(trace_id);
 
@@ -147,8 +169,10 @@ class TraceSQLiteStore:
                     created_at REAL NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON report_artifacts(created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_artifacts_group_created ON report_artifacts(group_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_created_name ON report_artifacts(created_at DESC, filename DESC);
+                DROP INDEX IF EXISTS idx_artifacts_created_at;
+                CREATE INDEX IF NOT EXISTS idx_artifacts_group_created_name ON report_artifacts(group_id, created_at DESC, filename DESC);
+                DROP INDEX IF EXISTS idx_artifacts_group_created;
                 CREATE INDEX IF NOT EXISTS idx_artifacts_trace_id ON report_artifacts(trace_id);
                 """
             )
@@ -170,6 +194,15 @@ class TraceSQLiteStore:
                     )
             except Exception:
                 pass
+
+            # 已知晓属于展示元数据，独立保存，避免追踪快照回写覆盖人工标记。
+            if not any(
+                row[1] == "acknowledged_at"
+                for row in conn.execute("PRAGMA table_info(analysis_traces)")
+            ):
+                conn.execute(
+                    "ALTER TABLE analysis_traces ADD COLUMN acknowledged_at REAL"
+                )
 
             # 兼容性防御迁移：确保 performance_metrics 表若从早期版本升级拥有 metrics_json 字段
             try:
@@ -200,9 +233,10 @@ class TraceSQLiteStore:
                     t_id = str(r["trace_id"] or "")
                     g_id = str(r["group_id"] or "")
                     c_at = float(r["started_at"] or time.time())
-                    extra_obj = json.loads(r["extra_json"] or "{}")
-                    for rf in extra_obj.get("report_files", []):
-                        if not isinstance(rf, dict) or not rf.get("filename"):
+                    extra_obj = _load_json_object(r["extra_json"])
+                    raw_reports = extra_obj.get("report_files")
+                    for rf in raw_reports if is_object_list(raw_reports) else []:
+                        if not is_string_mapping(rf) or not rf.get("filename"):
                             continue
                         fn = str(rf["filename"])
                         fmt = str(
@@ -293,12 +327,12 @@ class TraceSQLiteStore:
 
             # 6. 同步写入结构化产物关联表 report_artifacts
             raw_rfiles = extra_payload.get("report_files")
-            if not isinstance(raw_rfiles, list):
+            if not is_object_list(raw_rfiles):
                 return
             grp_id = str(trace_dict.get("group_id", ""))
             fallback_ts = time.time()
             for rf in raw_rfiles:
-                if not isinstance(rf, dict) or not rf.get("filename"):
+                if not is_string_mapping(rf) or not rf.get("filename"):
                     continue
                 fn = str(rf["filename"])
                 fmt = str(
@@ -341,35 +375,36 @@ class TraceSQLiteStore:
         """
         extra_raw = trace_dict.get("extra")
         extra_payload: dict[str, object] = (
-            dict(extra_raw) if isinstance(extra_raw, dict) else {}
+            dict(extra_raw) if is_string_mapping(extra_raw) else {}
         )
         meta = trace_dict.get("metadata", {})
-        if isinstance(meta, dict):
+        if is_string_mapping(meta):
             for k, v in meta.items():
                 if k not in extra_payload:
                     extra_payload[k] = v
-                elif isinstance(v, dict):
+                elif is_string_mapping(v):
                     existing_val = extra_payload.get(k)
-                    if isinstance(existing_val, dict):
+                    if is_string_mapping(existing_val):
                         existing_val.update(v)
-                elif isinstance(v, list):
+                elif is_object_list(v):
                     extra_payload[k] = v
 
         if previous_json:
             try:
-                old_extra = json.loads(previous_json)
-                merged_rfiles = list(old_extra.get("report_files", []))
+                old_extra = _load_json_object(previous_json)
+                old_reports = old_extra.get("report_files")
+                merged_rfiles = list(old_reports) if is_object_list(old_reports) else []
                 seen_filenames = {
-                    rf.get("filename")
+                    str(rf.get("filename"))
                     for rf in merged_rfiles
-                    if isinstance(rf, dict) and rf.get("filename")
+                    if is_string_mapping(rf) and rf.get("filename")
                 }
                 new_rfiles = extra_payload.get("report_files")
-                if isinstance(new_rfiles, list):
+                if is_object_list(new_rfiles):
                     for rf in new_rfiles:
-                        if not isinstance(rf, dict):
+                        if not is_string_mapping(rf):
                             continue
-                        fn = rf.get("filename")
+                        fn = str(rf.get("filename") or "")
                         if not fn or fn in seen_filenames:
                             continue
                         seen_filenames.add(fn)
@@ -419,9 +454,9 @@ class TraceSQLiteStore:
                 pass
 
         spans_raw = trace_dict.get("spans")
-        spans = spans_raw if isinstance(spans_raw, list) else []
+        spans = spans_raw if is_object_list(spans_raw) else []
         for span in spans:
-            if not isinstance(span, dict):
+            if not is_string_mapping(span):
                 continue
             span_status = str(span.get("status", "success"))
             if span_status == "running" and terminal_span_status:
@@ -468,7 +503,7 @@ class TraceSQLiteStore:
         """
         # 3. 写入 Context Metrics
         context_metrics = trace_dict.get("context_metrics")
-        if isinstance(context_metrics, dict):
+        if is_string_mapping(context_metrics):
             conn.execute(
                 """
                 INSERT INTO context_metrics (
@@ -484,17 +519,21 @@ class TraceSQLiteStore:
                 """,
                 (
                     trace_id,
-                    int(context_metrics.get("raw_message_count", 0)),
-                    int(context_metrics.get("cleaned_message_count", 0)),
-                    float(context_metrics.get("compression_ratio", 0.0)),
-                    int(context_metrics.get("incremental_batches", 0)),
-                    int(context_metrics.get("window_size", 0)),
+                    int(_metric_number(context_metrics.get("raw_message_count", 0))),
+                    int(
+                        _metric_number(context_metrics.get("cleaned_message_count", 0))
+                    ),
+                    float(
+                        _metric_number(context_metrics.get("compression_ratio", 0.0))
+                    ),
+                    int(_metric_number(context_metrics.get("incremental_batches", 0))),
+                    int(_metric_number(context_metrics.get("window_size", 0))),
                 ),
             )
 
         # 4. 写入 Token Usage
         token_usage = trace_dict.get("token_usage")
-        if isinstance(token_usage, dict):
+        if is_string_mapping(token_usage):
             conn.execute(
                 """
                 INSERT INTO token_usage (
@@ -510,17 +549,17 @@ class TraceSQLiteStore:
                 """,
                 (
                     trace_id,
-                    int(token_usage.get("prompt_tokens", 0)),
-                    int(token_usage.get("completion_tokens", 0)),
-                    int(token_usage.get("total_tokens", 0)),
-                    float(token_usage.get("estimated_cost", 0.0)),
+                    int(_metric_number(token_usage.get("prompt_tokens", 0))),
+                    int(_metric_number(token_usage.get("completion_tokens", 0))),
+                    int(_metric_number(token_usage.get("total_tokens", 0))),
+                    float(_metric_number(token_usage.get("estimated_cost", 0.0))),
                     json.dumps(token_usage.get("per_analyzer", {}), ensure_ascii=False),
                 ),
             )
 
         # 5. 写入 Performance Metrics
         perf_metrics = trace_dict.get("performance_metrics")
-        if perf_metrics and isinstance(perf_metrics, dict):
+        if perf_metrics and is_string_mapping(perf_metrics):
             conn.execute(
                 """
                 INSERT INTO performance_metrics (
@@ -535,10 +574,10 @@ class TraceSQLiteStore:
                 """,
                 (
                     trace_id,
-                    float(perf_metrics.get("init_memory_mb", 0.0)),
-                    float(perf_metrics.get("peak_memory_mb", 0.0)),
-                    float(perf_metrics.get("final_memory_mb", 0.0)),
-                    float(perf_metrics.get("delta_memory_mb", 0.0)),
+                    float(_metric_number(perf_metrics.get("init_memory_mb", 0.0))),
+                    float(_metric_number(perf_metrics.get("peak_memory_mb", 0.0))),
+                    float(_metric_number(perf_metrics.get("final_memory_mb", 0.0))),
+                    float(_metric_number(perf_metrics.get("delta_memory_mb", 0.0))),
                     json.dumps(
                         perf_metrics.get("metrics_extra", {}), ensure_ascii=False
                     ),
@@ -636,6 +675,50 @@ class TraceSQLiteStore:
             )
         return True
 
+    def set_trace_acknowledgement(
+        self, trace_id: str, acknowledged: bool
+    ) -> float | None:
+        """持久化或撤销已结束任务的已知晓标记，不改变执行状态。
+
+        Args:
+            trace_id: 需要标记的任务编号。
+            acknowledged: 为真时记录首次知晓时间，为假时恢复未知晓状态。
+
+        Returns:
+            当前知晓时间；撤销后为 None。
+
+        Raises:
+            KeyError: 任务不存在。
+            ValueError: 任务未结束或其状态无法识别。
+        """
+        terminal = (
+            TaskStatus.SUCCEEDED.value,
+            TaskStatus.COMPLETED.value,
+            TaskStatus.WARNING.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.ABORTED.value,
+            TaskStatus.CANCELLED.value,
+            TaskStatus.SKIPPED.value,
+        )
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                f"""UPDATE analysis_traces
+                    SET acknowledged_at = CASE WHEN ? THEN COALESCE(acknowledged_at, ?) ELSE NULL END
+                    WHERE trace_id = ? AND status IN ({",".join("?" for _ in terminal)})""",
+                (acknowledged, time.time(), trace_id, *terminal),
+            )
+            if cursor.rowcount == 0:
+                if not conn.execute(
+                    "SELECT 1 FROM analysis_traces WHERE trace_id = ?", (trace_id,)
+                ).fetchone():
+                    raise KeyError(trace_id)
+                raise ValueError("任务尚未结束或状态未记录，暂不能标记已知晓。")
+            row = conn.execute(
+                "SELECT acknowledged_at FROM analysis_traces WHERE trace_id = ?",
+                (trace_id,),
+            ).fetchone()
+            return float(row[0]) if row[0] is not None else None
+
     def get_trace(self, trace_id: str) -> dict[str, object] | None:
         """获取单个 Trace 的完整树状结构（包含 Spans、ContextMetrics、TokenUsage、PerformanceMetrics）"""
         with self._get_connection() as conn:
@@ -653,7 +736,7 @@ class TraceSQLiteStore:
                 "SELECT * FROM trace_spans WHERE trace_id = ? ORDER BY started_at ASC",
                 (trace_id,),
             ).fetchall()
-            spans = []
+            spans: list[dict[str, object]] = []
             extra_prompts = trace_data.get("extra", {}).get("llm_prompts", {})
             extra_attempts = trace_data.get("extra", {}).get("llm_attempts", [])
             for r in spans_rows:
@@ -718,9 +801,9 @@ class TraceSQLiteStore:
         """
         seen: set[str] = set()
         reports: list[dict[str, object]] = []
-        if isinstance(raw_files, list):
+        if is_object_list(raw_files):
             for raw in raw_files:
-                if not isinstance(raw, dict):
+                if not is_string_mapping(raw):
                     continue
                 filename = raw.get("filename")
                 if not isinstance(filename, str) or not filename or filename in seen:
@@ -732,11 +815,15 @@ class TraceSQLiteStore:
                 seen.add(filename)
                 reports.append(report)
 
+        # 旧文件可能保留原标识，新文件则只清理文件名；数据库键始终保持原样。
+        filename_trace_ids = {trace_id, strip_control_characters(trace_id)} - {""}
         reports_dir = self.db_path.parent / "reports"
         try:
             if reports_dir.is_dir():
                 for path in reports_dir.iterdir():
-                    if trace_id not in path.name or path.name in seen:
+                    if path.name in seen or not any(
+                        candidate in path.name for candidate in filename_trace_ids
+                    ):
                         continue
                     try:
                         if not path.is_file():
@@ -799,7 +886,7 @@ class TraceSQLiteStore:
                     try:
                         extra = json.loads(r["extra_json"] or "{}")
                         for rf in extra.get("report_files", []):
-                            fn = rf.get("filename")
+                            fn = str(rf.get("filename") or "")
                             if fn:
                                 mapping[fn] = t_id
                     except Exception:
@@ -810,8 +897,12 @@ class TraceSQLiteStore:
         self,
         group_id: str | None = None,
         search: str | None = None,
-        limit: int = 150,
+        limit: int | None = 150,
         offset: int = 0,
+        start_time: float | None = None,
+        end_time: float | None = None,
+        sort_order: str = "desc",
+        platform: str | None = None,
     ) -> list[dict[str, object]]:
         """从数据库高效分页拉取历史报告产物（纯索引有序扫描，支持按群过滤与模糊检索）"""
         with self._get_connection() as conn:
@@ -819,27 +910,56 @@ class TraceSQLiteStore:
             params: list[object] = []
 
             if group_id:
-                conditions.append("group_id = ?")
+                conditions.append("a.group_id = ?")
                 params.append(group_id)
 
             if search and search.strip():
                 kw = f"%{search.strip()}%"
                 conditions.append(
-                    "(filename LIKE ? OR trace_id LIKE ? OR group_id LIKE ?)"
+                    "(a.filename LIKE ? OR a.trace_id LIKE ? OR a.group_id LIKE ?)"
                 )
                 params.extend([kw, kw, kw])
 
+            if start_time is not None:
+                conditions.append("a.created_at >= ?")
+                params.append(start_time)
+            if end_time is not None:
+                conditions.append("a.created_at <= ?")
+                params.append(end_time)
+            if platform is not None:
+                conditions.append("COALESCE(t.platform, '') = ?")
+                params.append(platform)
             where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            direction = "ASC" if sort_order == "asc" else "DESC"
             query = f"""
-                SELECT filename, trace_id, group_id, file_format, relative_path, created_at
-                FROM report_artifacts
+                SELECT a.filename, a.trace_id, a.group_id, a.file_format, a.relative_path, a.created_at,
+                       COALESCE(t.platform, '') AS platform, COALESCE(t.group_name, '') AS group_name
+                FROM report_artifacts a
+                LEFT JOIN analysis_traces t ON a.trace_id = t.trace_id AND a.group_id = t.group_id
                 {where_clause}
-                ORDER BY created_at DESC
-                LIMIT ? OFFSET ?
+                ORDER BY a.created_at {direction}, a.filename {direction}
             """
-            params.extend([limit, offset])
+            if limit is not None:
+                query += " LIMIT ? OFFSET ?"
+                params.extend([limit, offset])
             rows = conn.execute(query, tuple(params)).fetchall()
             return [dict(r) for r in rows]
+
+    def delete_missing_report_artifacts(
+        self, artifacts: list[tuple[str, str, float]]
+    ) -> None:
+        """清理已确认缺失且核验期间未被重新登记的文件索引。
+
+        Args:
+            artifacts: 文件名、相对路径和原生成时间的条件快照。
+        """
+        if not artifacts:
+            return
+        with self._get_connection() as conn:
+            conn.executemany(
+                "DELETE FROM report_artifacts WHERE filename = ? AND relative_path = ? AND created_at = ?",
+                artifacts,
+            )
 
     def count_report_artifacts(
         self,
@@ -915,7 +1035,7 @@ class TraceSQLiteStore:
                     ORDER BY started_at ASC
                 """
                 rows = conn.execute(query).fetchall()
-            result = []
+            result: list[dict[str, object]] = []
             for r in rows:
                 item = dict(r)
                 try:
@@ -1062,7 +1182,10 @@ class TraceSQLiteStore:
             query = """
                 WITH ranked_traces AS (
                     SELECT group_id, group_name, platform, started_at,
-                           ROW_NUMBER() OVER (PARTITION BY group_id ORDER BY started_at DESC) AS rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY group_id, COALESCE(platform, '')
+                               ORDER BY started_at DESC
+                           ) AS rn
                     FROM analysis_traces
                     WHERE group_id != ''
                       AND group_name LIKE ?
@@ -1097,14 +1220,20 @@ class TraceSQLiteStore:
         end_time: float | None = None,
         sort_by: str = "started_at",
         sort_order: str = "desc",
+        before_time: float | None = None,
+        before_id: str | None = None,
+        platform: str | None = None,
     ) -> tuple[list[dict[str, object]], int]:
         """分页筛选查询 Trace 列表（支持按群组、状态、触发方式、关键词、时间范围筛选与排序）"""
-        conditions = []
+        conditions: list[str] = []
         params: list[object] = []
 
         if group_id:
             conditions.append("t.group_id = ?")
             params.append(str(group_id))
+        if platform is not None:
+            conditions.append("COALESCE(t.platform, '') = ?")
+            params.append(platform)
         if status:
             if status == TaskStatus.SUCCEEDED.value:
                 conditions.append("t.status IN (?, ?)")
@@ -1131,6 +1260,12 @@ class TraceSQLiteStore:
             like_pattern = f"%{search}%"
             params.extend([like_pattern, like_pattern, like_pattern])
 
+        if before_time is not None and before_id is not None:
+            if sort_by != "started_at" or sort_order != "desc" or offset:
+                raise ValueError("游标仅适用于时间倒序，且不能同时使用分页偏移")
+            conditions.append("(t.started_at, t.trace_id) < (?, ?)")
+            params.extend([before_time, before_id])
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         # 排序字段白名单校验
@@ -1144,6 +1279,8 @@ class TraceSQLiteStore:
         order_direction = "ASC" if sort_order.lower() == "asc" else "DESC"
 
         with self._get_connection() as conn:
+            # 显式读取事务确保计数与列表来自同一个 WAL 快照。
+            conn.execute("BEGIN")
             # 查询总数
             count_sql = f"SELECT COUNT(*) FROM analysis_traces t {where_clause}"
             total_count = conn.execute(count_sql, params).fetchone()[0]
@@ -1161,22 +1298,22 @@ class TraceSQLiteStore:
                 LEFT JOIN token_usage tu ON t.trace_id = tu.trace_id
                 LEFT JOIN context_metrics cm ON t.trace_id = cm.trace_id
                 {where_clause}
-                ORDER BY {order_field} {order_direction}
+                ORDER BY {order_field} {order_direction}, t.trace_id {order_direction}
                 LIMIT ? OFFSET ?
             """
             rows = conn.execute(query_sql, [*params, limit, offset]).fetchall()
 
-            traces = []
+            traces: list[dict[str, object]] = []
             for r in rows:
                 item = dict(r)
                 try:
                     extra = json.loads(item.pop("extra_json") or "{}")
-                    if isinstance(extra, dict):
+                    if is_string_mapping(extra):
                         # 列表接口剔除大体积 Payload，极大降低传输流量
                         extra.pop("llm_prompts", None)
                         extra.pop("llm_attempts", None)
                         extra.pop("checkpoint_summary", None)
-                    item["extra"] = extra if isinstance(extra, dict) else {}
+                    item["extra"] = extra if is_string_mapping(extra) else {}
                 except Exception:
                     item["extra"] = {}
                 traces.append(item)
@@ -1241,7 +1378,20 @@ class TraceSQLiteStore:
                 (start_of_today,),
             ).fetchone()
 
+            # 按完成时间读取最近五条有实测耗时的成功记录，兼容带警告完成及旧状态。
+            latest = conn.execute(
+                """
+                SELECT duration_ms FROM analysis_traces
+                WHERE status IN ('succeeded', 'warning', 'completed')
+                    AND completed_at IS NOT NULL AND duration_ms > 0
+                ORDER BY completed_at DESC, started_at DESC, trace_id DESC LIMIT 5
+                """
+            ).fetchall()
+
             return {
+                "analysis_performance": {
+                    "recent_durations_ms": [row["duration_ms"] for row in latest],
+                },
                 "total_traces": overview["total_traces"] or 0,
                 "succeeded_count": overview["succeeded_count"] or 0,
                 "failed_count": overview["failed_count"] or 0,
@@ -1398,12 +1548,7 @@ class TraceSQLiteStore:
         model_map: dict[str, TokenBreakdownItem] = {}
 
         for tw in usage_rows:
-            try:
-                extra = json.loads(tw["extra_json"] or "{}")
-            except Exception:
-                extra = {}
-            if not isinstance(extra, dict):
-                extra = {}
+            extra = _load_json_object(tw["extra_json"])
 
             llm_prompts = extra.get("llm_prompts", {})
 
@@ -1411,9 +1556,9 @@ class TraceSQLiteStore:
             providers_in_trace: set[str] = set()
             models_in_trace: set[str] = set()
 
-            if isinstance(llm_prompts, dict):
+            if is_string_mapping(llm_prompts):
                 for _, p_info in llm_prompts.items():
-                    if isinstance(p_info, dict):
+                    if is_string_mapping(p_info):
                         p_id = str(p_info.get("provider_id", "")).strip()
                         if p_id and p_id.lower() not in invalid_provider_names:
                             providers_in_trace.add(p_id)

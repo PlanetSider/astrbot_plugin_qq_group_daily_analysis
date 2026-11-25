@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { components } from "../../../shared/api/generated/schema";
+import type { components } from "@/shared/api/generated/schema";
 
 export type ConfigBackupInfo = components["schemas"]["ConfigBackupInfo"];
 export type ConfigBackupDetail = components["schemas"]["ConfigBackupDetail"];
@@ -17,9 +17,7 @@ export const configBackupInfoSchema: z.ZodType<ConfigBackupInfo> = z.object({
 export const configBackupListSchema = z.object({
   items: z.array(configBackupInfoSchema),
 });
-export const configBackupDetailSchema: z.ZodType<ConfigBackupDetail> = z.object(
-  {
-    backup: configBackupInfoSchema,
-    content: z.json(),
-  },
-);
+export const configBackupDetailSchema: z.ZodType<ConfigBackupDetail> = z.object({
+  backup: configBackupInfoSchema,
+  content: z.json(),
+});

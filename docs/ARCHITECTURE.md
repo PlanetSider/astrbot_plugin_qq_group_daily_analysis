@@ -75,6 +75,19 @@
 
 > **注**：领域层中严禁设立模糊的 `models/` 目录，所有不可变数据载体统一归位为 `value_objects/`。
 
+### 统一消息的分析链路
+
+平台适配器将原始消息转换成 `UnifiedMessage`，清洗、统计、活动图表、普通分析、增量分析和断点续跑都传递这一类型。不要再将消息压平成只有正文的协议字典，否则会丢失提及、回复和表情信息。
+
+- `contents` 保存消息段及顺序；`text_content` 是当前阶段的纯文本，由适配器提取、清洗服务同步更新，不表示构造对象时就已完成清洗。
+- `MessageContent.is_emoji()` 统一表情识别口径，供群统计、用户统计和小时分布使用。它只读取明确类型与 `is_sticker`。平台图片标记由 `message_normalization.py` 识别，旧快照由 `unified_message_codec.py` 在读取时转换，不把协议字段传入领域。
+- 话题、金句和聊天质量通过 `infrastructure/analysis/utils/analysis_messages.py` 提取 `AnalysisTextMessage`。提及写成 `@[用户ID]`，回复写成 `[回复:消息ID]`，本批次被引用的消息加上 `[消息:消息ID]`；未采集到的原文不会补造。
+- ID 保留字符串，不按 QQ 号解析；消息所属的平台与会话由分析任务限定。显示名统一通过 `get_display_name(use_card=...)` 选择，身份关联始终使用 ID。
+- 检查点保存结构化消息，恢复时还原内容段、平台和回复关系；只有文本的旧快照按已有文本继续分析，不要求用户迁移配置。
+- `frozen=True` 禁止字段重新赋值，清洗使用 `dataclasses.replace()` 生成新对象。消息段仅包含枚举、字符串和布尔值，不携带可变原始字典。旧 `raw_data` 只在快照读取边界使用，新快照只保存明确字段。
+
+只保留有生产调用的消息方法。提示词格式由分析模块处理，不在值对象内保留另一套格式化入口。
+
 ### 2.2 仓储与能力契约 (Repositories)
 位于 `src/domain/repositories/`，以抽象基类（`ABC`）形式定义外部技术能力契约：
 - `IAnalysisProvider`：多维度语义分析接口契约；
@@ -111,6 +124,8 @@ src/application/services/
    - `resume_from_checkpoint`：根据已生成的阶段快照跳过已耗费 Token 的 LLM 阶段，无缝续跑剩余流程；
    - `rerender_report`：纯前端/排版重绘，免 LLM 消耗快速切换视觉模板。
 
+续跑使用源任务的分析日期与专属快照。已经复用的 LLM 产物、需要继续分析的清洗上下文也会保存为新续跑任务的专属快照，重复续跑不因更换 Trace ID 丢失已完成结果；当前 Trace 的 `checkpoint_trace_id` 与 `analysis_date` 保留来源。快照仍按群组、日期和任务隔离，不退回读取同群其他任务的产物。
+
 ---
 
 ## 4. 基础设施层解耦规范 (Infrastructure Layer)
@@ -135,13 +150,17 @@ src/application/services/
 
 ### 4.4 平台适配与消息转换 (`infrastructure/platform/`)
 - `OneBotAdapter`：处理与 OneBot 协议端（NapCat、LLOneBot 等）的 API 交互；
-- `onebot/message_converter.py` (`OneBotMessageConverter`)：专职负责 OneBot CQ 码/消息段与统一 `UnifiedMessage` 的双向转换；
+- `onebot/message_converter.py` (`OneBotMessageConverter`)：专职将 OneBot 消息段转换为统一 `UnifiedMessage`；
 - `telegram_message_converter.py` (`TelegramMessageConverter`)：专职负责 Telegram 历史记录转换、占位昵称自愈与话题群 ID 解析；
 - `group_file_manager.py` (`GroupFileManager`)：专职负责群文件上传与归档管理；
-- `QQOfficialAdapter`, `TelegramAdapter`, `DiscordAdapter`：跨平台协议独立实现。
+- `QQOfficialAdapter`, `TelegramAdapter`, `DiscordAdapter`：跨平台协议独立实现；统一提供 `at_user_id`、`reply_to_id` 和明确的表情属性。无真实消费者的 `convert_to_raw_format()` 反向转换已移除。
+- `AstrBotEventReader`：解析宿主事件与平台字段，生成历史存储输入；`MessageProcessingService` 负责范围检查、去重、存储编排和群组注册，不解释 SDK 原始字段。
+- `AstrBotHistoryWriter`：封装宿主历史接口及旧版 `max_messages` 差异；兼容失败不能吞掉实际存储异常。
+- `ExternalDrawingAdapter`：封装外部绘图插件发现、请求及返回值检查，应用服务只读取图片字节或失败结果，并按配置回退。取消异常继续向上传递。
 
 ### 4.5 LLM 语义分析器与可观测性 (`infrastructure/analysis/`)
 - `LLMAnalyzer`：作为 IAnalysisProvider 门面协调器；
+- `utils/token_usage.py`：将宿主及供应商响应中的用量转换为 `TokenUsage`，领域对象不再反射读取外部 SDK。
 - 各独立 Analyzer（`TopicAnalyzer`, `UserTitleAnalyzer`, `GoldenQuoteAnalyzer`, `ChatQualityAnalyzer`, `ComicStoryboardAnalyzer`）继承自泛型基类 `BaseAnalyzer[TDataObject, TInputData]`，实现标准化重试、结构化 Schema 校验与 Token 统计；
 - `utils/llm_diagnostics.py`：专职负责 Python 异步协程帧栈深度反查、超时卡死链路追踪与长耗时诊断。
 
@@ -163,6 +182,11 @@ dashboard/src/
 
 - **MVVM 模式**：页面视图（View）与 ViewModel 严格解耦，网络请求与衍生计算全部内聚在 `use*ViewModel`；
 - **强类型通信桥**：通过 `shared/api/bridge.ts` 与 AstrBot 宿主进行严格类型的 Iframe Bridge 与 SSE 订阅通信。
+- **宿主模型只读展示**：`GET /config/host-llm` 使用宿主 Context 读取默认或指定群会话的当前模型，只返回模型标识、名称、模型名和加载状态。回退列表的版本兼容解析由 `analysis/utils/host_llm_config.py` 与运行时共用，不暴露完整 Provider 配置。前端 `entities/config` 负责契约校验与调用顺序推导，`widgets/host-llm-config` 管理会话选择、刷新及草稿预览；宿主读取结果不写入插件表单，也不提供宿主配置写接口。
+- **总览运行状态**：`GET /metrics/summary` 返回持久化的 `analysis_performance` 与内存中的 `llm_runtime`。存储层按完成时间倒序从有效的成功 Trace 读取最近五次实测耗时。路由在读取存储后调用 `analysis/utils/llm_utils.py` 的 `get_llm_runtime_snapshot()`，使用现有熔断器的 `snapshot()` 获取状态，不创建实例或取得请求许可。前端 `widgets/analysis-runtime` 负责紧凑展示，`OverviewPage` 复用总览刷新，`App` 将配置跳转定位到 `performance` 或 `llm` 分组并保留草稿。模型继承配置与运行状态的接口、展示职责分离。
+- **熔断请求许可**：`CircuitBreaker.check_request()` 为排队前只读检查，`acquire_request()` 在取得并发槽位后复查并发放带轮次的许可；半开只发放一个探测许可。结果反馈忽略旧轮次，取消或不计数异常由 `finally` 释放探测资格。`CircuitBreakerRejected` 仅表示未发送请求，统一调用层将其记录为 `llm_attempts.status=skipped` 与 `skip_reason`，删除当前 Provider 的剩余重试并免除退避；备用队列仍由原有配置选择逻辑构造。
+
+
 
 ---
 
@@ -170,7 +194,7 @@ dashboard/src/
 
 任何提交合并均需严格通过以下质量门禁：
 
-1. **类型安全**：`npx pyright` 严格模式 **0 错误、0 警告**；
-2. **代码风格与导入**：`uv run ruff check .` 与 `uv run ruff format --check .` 全量通过；
+1. **类型安全**：`uv run python scripts/check_python.py typecheck` 严格模式 **0 错误、0 警告**；
+2. **代码风格与导入**：`uv run python scripts/check_python.py lint .` 与 `uv run python scripts/check_python.py format . --check` 全量通过；
 3. **自动化测试**：`uv run pytest` 全量自动化测试套件 **100% 通过**；
 4. **前端规范**：`pnpm lint` 与 `pnpm typecheck` **0 错误**。

@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from ...domain.repositories.platform_adapter_repository import (
+    MarkdownImageSupportProtocol,
+)
 from ...domain.value_objects.report_delivery import (
     FEISHU_DELIVERY_MODES,
     FORWARD_GROUP_DELIVERY_MODES,
@@ -22,11 +25,13 @@ from ...domain.value_objects.report_delivery import (
     QQOfficialPrivateTarget,
 )
 from ...shared.constants import AnalysisStage
-from ...shared.trace_context import TraceContext
+from ...shared.trace_context import TraceContext, strip_control_characters
+from ...shared.type_guards import is_object_list, is_string_mapping
 from ...utils.logger import logger
 from ..messaging.feishu_bot_sender import FeishuBotSender
 from ..messaging.serverchan_bot_sender import ServerChanBotSender
 from .html_renderer import bind_group_html_renderer
+from .report_image import save_report_image
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -487,7 +492,7 @@ class ReportDispatcher:
 
         # 1. 检查渲染函数
         if not self._html_render_func and not any(
-            plan["render_service"] == "custom"
+            plan["render_service"] in ("custom", "typst")
             for plan in self.config_manager.get_t2i_rendering_strategy_config()
         ):
             logger.warning(f"[{trace_id}] 未设置 HTML 渲染函数，回退到文本模式。")
@@ -584,7 +589,7 @@ class ReportDispatcher:
                 try:
                     reports_dir = self.report_generator.data_dir / "reports"
                     reports_dir.mkdir(parents=True, exist_ok=True)
-                    eff_trace_id = (
+                    eff_trace_id = strip_control_characters(
                         trace_id
                         or (trace_ctx.trace_id if trace_ctx else "")
                         or TraceContext.get()
@@ -597,20 +602,14 @@ class ReportDispatcher:
                         else f"report_{group_id}_{ts_str}.jpg"
                     )
                     dest = reports_dir / filename
+                    dest = save_report_image(image_url, dest)
                     dest_filename = dest.name
-                    if os.path.exists(image_url):
-                        import shutil
-
-                        shutil.copy2(image_url, dest)
-                    elif image_url.startswith("base64://"):
-                        data = base64.b64decode(image_url[9:])
-                        dest.write_bytes(data)
 
                     # 关联到 TraceContext 并在数据库中更新元数据
                     if trace_ctx:
                         rfiles = trace_ctx.metadata.setdefault("report_files", [])
-                        if isinstance(rfiles, list) and not any(
-                            isinstance(rf, dict) and rf.get("filename") == dest.name
+                        if is_object_list(rfiles) and not any(
+                            is_string_mapping(rf) and rf.get("filename") == dest.name
                             for rf in rfiles
                         ):
                             rfiles.append(
@@ -684,7 +683,7 @@ class ReportDispatcher:
                 # 5. 群聊才备份到群文件或群相册，私聊严格不调用群接口。
                 if isinstance(delivery_target, GroupReportTarget):
                     try:
-                        await self._try_upload_image(
+                        await self.try_upload_image(
                             delivery_target.group_id,
                             image_url,
                             delivery_target.platform_id,
@@ -830,8 +829,8 @@ class ReportDispatcher:
                     html_filename = html_file.name
                     if trace_ctx:
                         rfiles = trace_ctx.metadata.setdefault("report_files", [])
-                        if isinstance(rfiles, list) and not any(
-                            isinstance(rf, dict)
+                        if is_object_list(rfiles) and not any(
+                            is_string_mapping(rf)
                             and rf.get("filename") == html_file.name
                             for rf in rfiles
                         ):
@@ -988,6 +987,7 @@ class ReportDispatcher:
             logger.error("[分发器] 报告生成器未初始化，无法生成文本报告。")
             return False
         is_qq_official = self._is_qq_official(delivery_target.platform_id)
+        adapter = self.message_sender.bot_manager.get_adapter(platform_id)
         fallback_report = None
         if isinstance(delivery_target, QQOfficialPrivateTarget):
             text_report = self.report_generator.generate_text_report(analysis_result)
@@ -1001,6 +1001,9 @@ class ReportDispatcher:
                 mention_style="qq"
                 if platform_id == delivery_target.platform_id
                 else "name",
+                summary_image_uploader=adapter.upload_markdown_image
+                if isinstance(adapter, MarkdownImageSupportProtocol)
+                else None,
             )
         elif self._uses_shared_markdown_report(delivery_target.platform_id):
             # 跨平台报告使用昵称，避免把源平台的用户 ID 当成目标平台账号。
@@ -1016,6 +1019,8 @@ class ReportDispatcher:
         adapter = self.message_sender.bot_manager.get_adapter(
             delivery_target.platform_id
         )
+        # 尝试通过适配器发送文本报告
+        logger.debug(f"[分发器] 正在尝试通过适配器发送文本报告。群: {group_id}")
 
         async with (
             trace_ctx.span_async(
@@ -1086,7 +1091,7 @@ class ReportDispatcher:
     # 图片报告上传到群文件 / 群相册（仅 QQ 平台 image 格式）
     # ================================================================
 
-    async def _try_upload_image(
+    async def try_upload_image(
         self,
         group_id: str,
         image_url: str,
@@ -1201,13 +1206,11 @@ class ReportDispatcher:
             if not image_data:
                 return None
 
-            date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(
-                tempfile.gettempdir(), f"report_{group_id}_{date_str}.png"
-            )
-            with open(path, "wb") as f:
+            with tempfile.NamedTemporaryFile(
+                prefix="group_report_", suffix=".png", delete=False
+            ) as f:
                 f.write(image_data)
-            return path
+                return f.name
         except Exception as e:
             logger.debug(f"保存图片到临时文件失败: {e}")
             return None

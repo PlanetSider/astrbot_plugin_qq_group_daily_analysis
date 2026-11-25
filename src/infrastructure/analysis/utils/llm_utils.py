@@ -9,30 +9,42 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
-from astrbot.api.provider import LLMResponse
+from astrbot.api.provider import LLMResponse, Provider
 
 from ....shared.constants import AnalysisStage
 from ....shared.report_language import apply_report_language
 from ....shared.trace_context import TraceContext
+from ....shared.type_guards import (
+    is_object_list,
+    is_string_mapping,
+)
 from ....utils.logger import logger
-from ....utils.resilience import CircuitBreaker, GlobalRateLimiter
+from ....utils.resilience import (
+    CircuitBreaker,
+    CircuitBreakerRejected,
+    CircuitRequestPermit,
+    GlobalRateLimiter,
+)
+from .host_llm_config import get_configured_host_fallback_ids
 from .llm_diagnostics import (
     LLMBlockDiagnosis,
     diagnose_llm_task_block,
     extract_task_await_frames,
     format_task_await_chain,
 )
+from .token_usage import parse_token_usage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from astrbot.api.star import Context
 
     from ....domain.repositories.bot_client_protocol import (
         LLMStreamProviderProtocol,
     )
+    from ....utils.resilience import CircuitBreakerSnapshot
     from ...config.config_manager import ConfigManager
     from .structured_output_schema import JSONObject, JSONValue
 
@@ -47,6 +59,14 @@ __all__ = [
     "format_task_await_chain",
     "get_provider_id_with_fallback",
 ]
+
+
+class LlmRuntimeSnapshot(TypedDict):
+    """总览运行状态，与宿主配置读取解耦。"""
+
+    captured_at: float
+    circuits: dict[str, CircuitBreakerSnapshot]
+
 
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 _LLM_LIMITER_WARN_SECONDS = 15.0
@@ -110,12 +130,12 @@ class ProviderMetadata:
                 timeout=None,
             )
 
-        prov_cfg = (
+        prov_cfg: object = (
             getattr(provider_inst, "provider_config", None)
             or getattr(provider_inst, "config", None)
             or {}
         )
-        if isinstance(prov_cfg, dict):
+        if is_string_mapping(prov_cfg):
             raw_model = (
                 prov_cfg.get("model")
                 or getattr(provider_inst, "model", None)
@@ -136,7 +156,7 @@ class ProviderMetadata:
             raw_timeout = getattr(provider_inst, "timeout", None)
 
         parsed_timeout: float | None = None
-        if raw_timeout is not None:
+        if isinstance(raw_timeout, (str, int, float)):
             try:
                 t_val = float(raw_timeout)
                 if t_val > 0:
@@ -224,6 +244,23 @@ def get_provider_circuit_breaker(provider_id: str) -> CircuitBreaker:
 
 
 _get_circuit_breaker = get_provider_circuit_breaker
+
+
+def get_llm_runtime_snapshot() -> LlmRuntimeSnapshot:
+    """读取插件运行快照，不创建熔断器或触发恢复尝试。
+
+    Returns:
+        当前各 Provider 熔断状态及读取时间。
+
+    Raises:
+        不主动抛出异常。
+    """
+    return {
+        "captured_at": time.time(),
+        "circuits": {
+            pid: breaker.snapshot() for pid, breaker in _circuit_breakers.items()
+        },
+    }
 
 
 async def _call_provider_stream(
@@ -317,9 +354,10 @@ async def _try_get_session_provider_id(context: Context, umo: str | None) -> str
     Returns:
         Provider ID 或 None
     """
-    if not umo:
-        return None
     try:
+        if not umo:
+            provider = await context.get_using_provider_async()
+            return provider.meta().id if provider else None
         # 使用新 API 获取当前会话的 Provider ID
         provider_id = await context.get_current_chat_provider_id(umo=umo)
         if provider_id:
@@ -386,8 +424,8 @@ async def get_provider_id_with_fallback(
         logger.debug(f"[Provider 选择] 开始为 {task_desc} 选择 Provider...")
 
         # 定义回退策略列表
-        strategies = []
-        strategy_names = []
+        strategies: list[Callable[[], Awaitable[str | None]]] = []
+        strategy_names: list[str] = []
 
         # 0. 显式覆盖 Provider (续跑或手动调试时通过 TraceContext 传入)
         trace = TraceContext.current()
@@ -462,6 +500,33 @@ async def get_provider_id_with_fallback(
         return None
 
 
+def _get_host_fallback_provider_ids(context: Context, umo: str | None) -> list[str]:
+    """兼容 AstrBot 各版本配置，读取有序的回退对话模型。
+
+    Args:
+        context: 提供会话生效配置的宿主上下文。
+        umo: 会话来源；为 None 时读取默认配置。
+
+    Returns:
+        已去重且可用的对话模型 ID；读取失败时返回空列表。
+
+    Raises:
+        不向外抛出普通异常；配置读取和模型查询异常均记录日志并返回空列表。
+    """
+    try:
+        provider_ids: list[str] = []
+        for pid in get_configured_host_fallback_ids(context.get_config(umo=umo)):
+            provider = context.get_provider_by_id(pid)
+            if not isinstance(provider, Provider):
+                logger.warning(f"跳过不可用的回退对话模型: {pid}")
+                continue
+            provider_ids.append(pid)
+        return provider_ids
+    except Exception as exc:
+        logger.warning(f"无法读取 AstrBot 回退对话模型: {exc}")
+        return []
+
+
 async def call_provider_with_retry(
     context: Context,
     config_manager: ConfigManager,
@@ -483,6 +548,7 @@ async def call_provider_with_retry(
         prompt: 输入的提示语
         umo: 指定使用的模型唯一标识符
         provider_id_key: 配置中的 provider_id 键名（如 'topic_provider_id'），用于选择特定的 Provider
+        provider_id: 预先解析的首选 Provider；回退策略仍由配置决定。
         system_prompt: 系统提示词
         response_format: 结构化输出约束（OpenAI 风格）
         extra_generate_kwargs: 传递给 context.llm_generate 的附加参数（用于内部高级重试策略）
@@ -500,6 +566,10 @@ async def call_provider_with_retry(
     enable_streaming_llm_call = config_manager.get_enable_streaming_llm_call()
     trace = TraceContext.current()
     trace_metadata = trace.metadata if trace else {}
+    # 在首次请求前固定继承资格，避免等待模型响应期间保存配置改变本次回退策略。
+    inherit_host_fallbacks = not config_manager.get_llm_provider_id() and not (
+        trace_metadata.get("override_provider_id")
+    )
     observation_stage = str(trace_metadata.get("llm_stage") or "unknown")
     observation_group = str(
         trace_metadata.get("llm_group_id")
@@ -509,7 +579,7 @@ async def call_provider_with_retry(
     observation_area = observation_label or provider_id_key or "未标注"
 
     # 1. 确定我们要尝试的 Provider 队列
-    attempt_queue = []
+    attempt_queue: list[tuple[str, bool]] = []
 
     # 尝试获取指定的 Provider
     specific_provider_id = provider_id
@@ -537,11 +607,11 @@ async def call_provider_with_retry(
         request_started_at = time.monotonic()
         actual_model = None
         cb = _get_circuit_breaker(pid)
-        if not cb.allow_request():
-            logger.warning(f"Provider {pid} 熔断器已打开，跳过本次请求")
-            raise Exception("Circuit breaker open")
+        permit: CircuitRequestPermit | None = None
 
         try:
+            # 排队前仅检查，不提前占用恢复探测资格。
+            cb.check_request()
             limiter = GlobalRateLimiter.get_instance()
             semaphore = limiter.semaphore
             wait_started_at = time.monotonic()
@@ -580,6 +650,8 @@ async def call_provider_with_retry(
             )
             request_started_at = time.monotonic()
             try:
+                # 等待槽位期间状态可能已变；实际发送前复查并取得恢复许可。
+                permit = cb.acquire_request()
                 # 借助强类型 ProviderMetadata (ACL) 提取模型与超时信息
                 meta = ProviderMetadata.from_provider_id(context, pid)
                 actual_model = meta.model
@@ -618,9 +690,9 @@ async def call_provider_with_retry(
                     if actual_model:
                         trace.metadata["model"] = str(actual_model)
                     prompts_map = trace.metadata.setdefault("llm_prompts", {})
-                    if isinstance(prompts_map, dict) and observation_label:
+                    if is_string_mapping(prompts_map) and observation_label:
                         slot = prompts_map.setdefault(observation_label, {})
-                        if isinstance(slot, dict):
+                        if is_string_mapping(slot):
                             slot["provider_id"] = pid
                             if actual_model:
                                 slot["model"] = str(actual_model)
@@ -796,7 +868,7 @@ async def call_provider_with_retry(
                     f"duration={time.monotonic() - request_started_at:.2f}s, "
                     f"available={limiter.available_slots}/{limiter.max_concurrency}"
                 )
-            cb.record_success()
+            cb.record_success(permit)
             duration_ms = (time.monotonic() - request_started_at) * 1000
             if trace:
                 attempts_list = trace.metadata.setdefault("llm_attempts", [])
@@ -809,13 +881,13 @@ async def call_provider_with_retry(
                     "duration_ms": round(duration_ms, 1),
                     "is_fallback": is_fallback_request,
                 }
-                if isinstance(attempts_list, list):
+                if is_object_list(attempts_list):
                     attempts_list.append(attempt_item)
-                for s in reversed(trace._spans):
+                for s in reversed(trace.spans):
                     if s.get("stage_name") == AnalysisStage.LLM_ANALYSIS.value:
                         payload = s.setdefault("payload", {})
                         span_attempts = payload.setdefault("llm_attempts", [])
-                        if isinstance(span_attempts, list):
+                        if is_object_list(span_attempts):
                             span_attempts.append(attempt_item)
                         break
             return resp
@@ -828,20 +900,29 @@ async def call_provider_with_retry(
                     "attempt": attempt_num,
                     "provider_id": pid,
                     "model": actual_model or "default",
-                    "status": "failed",
+                    "status": "skipped"
+                    if isinstance(err, CircuitBreakerRejected)
+                    else "failed",
                     "duration_ms": round(duration_ms, 1),
                     "is_fallback": is_fallback_request,
                     "error": str(err),
                 }
-                if isinstance(attempts_list, list):
+                if isinstance(err, CircuitBreakerRejected):
+                    # 跳过没有向上游发出请求，原因单独保存，避免界面当成调用失败。
+                    attempt_item.pop("error")
+                    attempt_item["model"] = actual_model or ""
+                    attempt_item["skip_reason"] = str(err)
+                if is_object_list(attempts_list):
                     attempts_list.append(attempt_item)
-                for s in reversed(trace._spans):
+                for s in reversed(trace.spans):
                     if s.get("stage_name") == AnalysisStage.LLM_ANALYSIS.value:
                         payload = s.setdefault("payload", {})
                         span_attempts = payload.setdefault("llm_attempts", [])
-                        if isinstance(span_attempts, list):
+                        if is_object_list(span_attempts):
                             span_attempts.append(attempt_item)
                         break
+            if isinstance(err, CircuitBreakerRejected):
+                raise
             if r_format is not None and _is_response_format_unsupported_error(err):
                 raise err
             if _is_content_risk_error(err):
@@ -849,8 +930,13 @@ async def call_provider_with_retry(
                     f"[LLM 熔断保护] 请求命中了上游内容风控拦截，不计入 Provider[{pid}] 熔断器失败计数。"
                 )
                 raise err
-            cb.record_failure()
+            if permit is not None:
+                cb.record_failure(permit)
             raise err
+        finally:
+            # 包括主动取消和不计入失败的异常；已反馈结果的许可释放为无操作。
+            if permit is not None:
+                cb.release_request(permit)
 
     # 3. 开始执行队列
     last_exc = None
@@ -858,8 +944,9 @@ async def call_provider_with_retry(
 
     # 记录上一次尝试的 Provider ID，用于判断是否发生切换
     previous_pid = None
-    # 惰性降级标记：仅在 primary provider 重试用尽后才 resolve fallback
-    needs_fallback = provider_id_key is not None
+    # 首选模型失败后才解析回退队列，临时指定模型不追加宿主回退列表。
+    needs_fallback = True
+    provider_attempt_num = 0
 
     queue_index = 0
     while queue_index < len(attempt_queue):
@@ -869,7 +956,9 @@ async def call_provider_with_retry(
         # 修复状态污染：如果切换了全新的 Provider，必须重置 response_format 约束
         if current_pid != previous_pid:
             current_response_format = response_format
+            provider_attempt_num = 0
         previous_pid = current_pid
+        provider_attempt_num += 1
 
         prefix = "[降级补偿] " if is_fallback else "[LLM 调用] "
         logger.debug(
@@ -913,8 +1002,15 @@ async def call_provider_with_retry(
                 except Exception as inner_e:
                     last_exc = inner_e
 
+            if isinstance(last_exc, CircuitBreakerRejected):
+                logger.info(f"{prefix}Provider[{current_pid}] 已跳过: {last_exc}")
+                attempt_queue = [
+                    item
+                    for idx, item in enumerate(attempt_queue)
+                    if idx <= queue_index or item[0] != current_pid
+                ]
             # 处理上游内容安全审查/敏感词风控拦截 (Content Risk / Moderation Filter)
-            if _is_content_risk_error(last_exc):
+            elif _is_content_risk_error(last_exc):
                 logger.warning(
                     f"{prefix}[LLM 内容风控拦截] 上游模型服务商触发了安全审查拒绝 (Content Risk / Moderation Filter)！\n"
                     f"  - 错误详情: {last_exc}\n"
@@ -926,53 +1022,47 @@ async def call_provider_with_retry(
                     f"    4. 在插件设置中配置群消息过滤词，过滤群内特定违规发言。"
                 )
 
-                # 惰性降级：若主 Provider 遭遇风控且存在未注入的 fallback，立即注入 fallback 并切换
-                if not is_fallback and needs_fallback:
-                    fallback_provider_id = await get_provider_id_with_fallback(
-                        context, config_manager, None, umo
-                    )
-                    if (
-                        fallback_provider_id
-                        and fallback_provider_id != specific_provider_id
-                    ):
-                        needs_fallback = False
-                        # 剔除当前主 Provider 的所有后续同质重试
-                        attempt_queue = [
-                            item
-                            for idx, item in enumerate(attempt_queue)
-                            if idx <= queue_index or item[0] != current_pid
-                        ]
-                        for _ in range(retries):
-                            attempt_queue.append((fallback_provider_id, True))
-                        queue_index += 1
-                        continue
-
-                # 若无 fallback 或 fallback 同样遭遇风控，立即跳过所有属于当前 Provider 的重试
+                # 跳过已拒绝当前内容的模型的剩余重试。
                 attempt_queue = [
                     item
                     for idx, item in enumerate(attempt_queue)
                     if idx <= queue_index or item[0] != current_pid
                 ]
-                queue_index += 1
-                continue
+            else:
+                logger.warning(f"{prefix}请求失败: {last_exc}")
 
-            logger.warning(f"{prefix}请求失败: {last_exc}")
-            # 惰性降级：仅当所有 primary provider 的重试都耗尽后才 resolve 并注入 fallback
-            if not is_fallback and queue_index == retries - 1 and needs_fallback:
-                fallback_provider_id = await get_provider_id_with_fallback(
-                    context, config_manager, None, umo
-                )
-                if (
-                    fallback_provider_id
-                    and fallback_provider_id != specific_provider_id
-                ):
-                    for _ in range(retries):
-                        attempt_queue.append((fallback_provider_id, True))
+            if queue_index == len(attempt_queue) - 1 and needs_fallback:
+                needs_fallback = False
+                fallback_ids: list[str] = []
+                if provider_id_key is not None:
+                    fallback_provider_id = await get_provider_id_with_fallback(
+                        context, config_manager, None, umo
+                    )
+                    if fallback_provider_id:
+                        fallback_ids.append(fallback_provider_id)
+                if inherit_host_fallbacks:
+                    fallback_ids.extend(_get_host_fallback_provider_ids(context, umo))
+                queued_ids = {pid for pid, _ in attempt_queue}
+                for fallback_id in fallback_ids:
+                    if fallback_id not in queued_ids:
+                        attempt_queue.extend([(fallback_id, True)] * retries)
+                        queued_ids.add(fallback_id)
 
             is_last_attempt = queue_index == len(attempt_queue) - 1
-            if not is_last_attempt:
-                # Exponential backoff with jitter: backoff * (2 ^ (attempt_num - 1)) + random jitter
-                sleep_time = backoff * (2 ** (attempt_num - 1)) + random.uniform(0, 1)
+            skip_backoff = isinstance(
+                last_exc, CircuitBreakerRejected
+            ) or _is_content_risk_error(last_exc)
+            if not skip_backoff:
+                try:
+                    _get_circuit_breaker(current_pid).check_request()
+                except CircuitBreakerRejected:
+                    # 本次失败刚触发熔断时，也无需先等待一次退避再进入跳过流程。
+                    skip_backoff = True
+            if not is_last_attempt and not skip_backoff:
+                # 按模型独立计算退避，避免回退链越长等待时间越大。
+                sleep_time = backoff * (
+                    2 ** (provider_attempt_num - 1)
+                ) + random.uniform(0, 1)
                 logger.debug(f"等待 {sleep_time:.2f} 秒后重试...")
                 await asyncio.sleep(sleep_time)
 
@@ -991,9 +1081,8 @@ def extract_token_usage(response: object) -> dict[str, int]:
     Returns:
         Token使用统计字典，包含prompt_tokens, completion_tokens, total_tokens
     """
-    from ....domain.value_objects import TokenUsage
 
-    usage_vo = TokenUsage.from_llm_response(response)
+    usage_vo = parse_token_usage(response)
     return {
         "prompt_tokens": usage_vo.prompt_tokens,
         "completion_tokens": usage_vo.completion_tokens,

@@ -6,6 +6,8 @@ WebUI 模块化路由单元测试 (WebUI Modular Routes Tests)
 
 from __future__ import annotations
 
+from src.domain.entities.incremental_state import IncrementalBatchPage
+
 import asyncio
 import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -85,6 +87,7 @@ async def test_resume_task_uses_new_trace_and_preserves_terminal_source(
             "group_name": "测试群",
             "platform": "onebot",
             "status": "running",
+            "extra": {"analysis_date": "2026-10-01"},
         }
     )
     TaskLifecycleService(mock_trace_store).transition(
@@ -121,6 +124,8 @@ async def test_resume_task_uses_new_trace_and_preserves_terminal_source(
         resumed_args.append(kwargs)
 
     routes = TaskRoutes(mock_trace_store, mock_active_mgr, MagicMock())
+    routes.analysis_service.bot_manager.resolve_platform_id.side_effect = lambda value: value
+    routes.analysis_service.is_group_running.return_value = False
     monkeypatch.setattr(routes, "_run_resumed_task", run_resumed_task)
 
     response = await routes.api_resume_task("resume-source")
@@ -131,6 +136,7 @@ async def test_resume_task_uses_new_trace_and_preserves_terminal_source(
     assert new_trace_id != "resume-source"
     assert resumed_args[0]["trace_id"] == new_trace_id
     assert resumed_args[0]["checkpoint_trace_id"] == "resume-source"
+    assert resumed_args[0]["date_str"] == "2026-10-01"
     assert mock_trace_store.get_trace("resume-source")["status"] == "failed"
     assert mock_trace_store.get_trace(new_trace_id)["status"] == "running"
     await mock_active_mgr.finish_task(new_trace_id)
@@ -422,7 +428,8 @@ async def test_incremental_and_checkpoint_routes_resilience(
     mock_ckpt_store = MagicMock()
     mock_ckpt_store.list_all_checkpoints.return_value = ([], 0)
     mock_inc_store = AsyncMock()
-    mock_inc_store.get_all_batches_with_details.return_value = []
+    mock_inc_store.for_session.return_value = mock_inc_store
+    mock_inc_store.list_batch_page.return_value = IncrementalBatchPage([], 0, 1, 20, 0)
     mock_inc_store.get_last_analyzed_cursor.return_value = (None, set())
 
     mock_svc = MagicMock()
@@ -612,6 +619,24 @@ async def test_report_scan_applies_search_before_pagination(
 
 
 @pytest.mark.asyncio
+async def test_report_type_filters_before_pagination(tmp_path, mock_trace_store, monkeypatch):
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    for name in ("comic_12345_20261001.png", "漫画_12345_20261002.png", "report_12345_20261003.html"):
+        (reports_dir / name).write_bytes(b"report")
+    route_module = importlib.import_module(ReportRoutes.__module__)
+    monkeypatch.setattr(
+        route_module, "request", MagicMock(query={"report_type": "comic", "limit": "1", "offset": "1"})
+    )
+    routes = ReportRoutes(mock_trace_store, None, report_output_dir=reports_dir)
+    for _ in range(2):
+        result = await routes.api_get_report_history()
+        body = result["data"] if "status" in result.get("data", {}) else result
+        assert body["data"]["total"] == 2
+        assert [item["report_type"] for item in body["data"]["items"]] == ["comic"]
+
+
+@pytest.mark.asyncio
 async def test_rerender_date_does_not_guess_unrelated_latest_trace(
     mock_trace_store, monkeypatch
 ):
@@ -629,6 +654,7 @@ async def test_rerender_date_does_not_guess_unrelated_latest_trace(
                     "group_id": "12345",
                     "date_str": "2026-10-01",
                     "template_name": "scrapbook",
+                    "platform_id": "first",
                 }
             ),
         ),
@@ -638,3 +664,44 @@ async def test_rerender_date_does_not_guess_unrelated_latest_trace(
     )
     await ReportRoutes(mock_trace_store, service).api_rerender_report()
     assert service.rerender_report.call_args.kwargs["trace_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_incremental_cursor_contract_preserves_message_time(mock_trace_store):
+    from astrbot.api.web import PluginMultiDict
+    from astrbot_plugin_qq_group_daily_analysis.src.infrastructure.webui.web_compat import request as proxy_request
+
+    store = AsyncMock()
+    store.for_session.return_value = store
+    store.list_batch_page.return_value = IncrementalBatchPage([], 3, 1, 20, 456)
+    store.get_last_analyzed_cursor.return_value = (120, {"one", "two"})
+    routes = DataManagementRoutes(mock_trace_store, MagicMock(incremental_store=store))
+    target = MagicMock(query=PluginMultiDict([("group_id", "telegram:-1001")]))
+    with patch.object(proxy_request, "_get_target", return_value=target):
+        result = await routes.api_get_incremental_batches()
+    body = result["data"] if "status" in result.get("data", {}) else result
+    assert body["data"]["cursor"] == {
+        "timestamp": 120,
+        "group_id": "telegram:-1001",
+        "last_analyzed_timestamp": 120,
+        "last_message_timestamp": 456,
+        "tracked_message_ids_count": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_rerender_checks_source_session_before_calling_application(mock_trace_store, monkeypatch):
+    route_module = importlib.import_module(ReportRoutes.__module__)
+    mock_trace_store.save_trace({"trace_id": "source-session", "group_id": "123", "platform": "first", "status": "running"})
+    body = {"group_id": "123", "date_str": "2026-11-07", "trace_id": "source-session", "platform_id": "second", "template_name": "scrapbook"}
+    request = MagicMock(query={}, json=AsyncMock(return_value=body))
+    monkeypatch.setattr(route_module, "request", request)
+    monkeypatch.setattr(route_module, "error_response", lambda message, status_code: {"status_code": status_code, "message": message})
+    service = MagicMock(rerender_report=AsyncMock(return_value={"success": True}))
+    service.bot_manager.resolve_platform_id.side_effect = lambda value: value
+    route = ReportRoutes(mock_trace_store, service)
+    assert (await route.api_rerender_report())["status_code"] == 400
+    service.rerender_report.assert_not_awaited()
+    body.pop("platform_id")
+    await route.api_rerender_report()
+    assert service.rerender_report.call_args.kwargs["platform_id"] == "first"

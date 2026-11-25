@@ -1,5 +1,5 @@
-import { apiGet, extractData } from "../../../shared/api/bridge";
-import { MetricsSummary, AnalyticsTrendsResponse } from "../model/types";
+import { apiGet, extractData } from "@/shared/api/bridge";
+import { MetricsSummary, AnalyticsTrendsResponse } from "@/entities/metric/model/types";
 
 export async function fetchMetricsSummary(): Promise<MetricsSummary> {
   const res = await apiGet<MetricsSummary>("metrics/summary");
@@ -18,26 +18,16 @@ export async function fetchMetricsSummary(): Promise<MetricsSummary> {
       today_tokens_spent: data.today_tokens_spent ?? 0,
       today_cost_spent: data.today_cost_spent ?? 0,
       trends: data.trends,
+      llm_runtime: data.llm_runtime,
+      analysis_performance: data.analysis_performance,
     };
   }
-  return {
-    total_traces: 0,
-    succeeded_count: 0,
-    failed_count: 0,
-    success_rate: 0,
-    avg_duration_ms: 0,
-    today_traces: 0,
-    today_active_groups: 0,
-    total_tokens_spent: 0,
-    total_cost_spent: 0,
-    today_tokens_spent: 0,
-    today_cost_spent: 0,
-  };
+  throw new Error("统计接口未返回数据。");
 }
 
 export async function fetchAnalyticsTrends(
   granularity: "day" | "hour" = "day",
-  rangeCount: number = 14
+  rangeCount: number = 14,
 ): Promise<AnalyticsTrendsResponse | null> {
   const res = await apiGet<AnalyticsTrendsResponse>("metrics/trends", {
     granularity,
@@ -49,4 +39,3 @@ export async function fetchAnalyticsTrends(
   }
   return null;
 }
-

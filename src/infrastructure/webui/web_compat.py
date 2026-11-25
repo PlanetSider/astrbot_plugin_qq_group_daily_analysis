@@ -5,10 +5,15 @@
 
 from __future__ import annotations
 
+import inspect
 import sys
 from typing import TYPE_CHECKING, Protocol, TypeAlias, runtime_checkable
 
+from ...shared.type_guards import is_string_mapping
+
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from fastapi.responses import FileResponse, JSONResponse, Response
     from starlette.responses import StreamingResponse
 
@@ -59,6 +64,13 @@ except (ImportError, AttributeError):
 
 
 @runtime_checkable
+class UploadedFileMapping(Protocol):
+    """宿主多值文件映射的读取契约。"""
+
+    def items(self) -> Iterable[tuple[str, object]]: ...
+
+
+@runtime_checkable
 class RequestProtocol(Protocol):
     """Web 请求对象结构化契约协议。"""
 
@@ -77,8 +89,7 @@ class RequestProtocol(Protocol):
         """Starlette/FastAPI 查询参数兼容字典。"""
         ...
 
-    @property
-    def files(self) -> dict[str, object]:
+    async def files(self) -> dict[str, object]:
         """上传文件映射字典。"""
         ...
 
@@ -123,8 +134,8 @@ class _RequestProxy:
             return {}
         res = getattr(target, "query", None)
         if res is not None:
-            if isinstance(res, dict):
-                return dict(res)
+            if is_string_mapping(res):
+                return {k: str(v) for k, v in res.items()}
             if hasattr(res, "items"):
                 return {str(k): str(v) for k, v in res.items()}
             if hasattr(res, "_pairs"):
@@ -136,8 +147,8 @@ class _RequestProxy:
                 pass
         res_params = getattr(target, "query_params", None)
         if res_params is not None:
-            if isinstance(res_params, dict):
-                return dict(res_params)
+            if is_string_mapping(res_params):
+                return {k: str(v) for k, v in res_params.items()}
             if hasattr(res_params, "items"):
                 return {str(k): str(v) for k, v in res_params.items()}
             try:
@@ -159,8 +170,8 @@ class _RequestProxy:
             return {}
         res = getattr(target, "headers", None)
         if res is not None:
-            if isinstance(res, dict):
-                return dict(res)
+            if is_string_mapping(res):
+                return {k: str(v) for k, v in res.items()}
             if hasattr(res, "items"):
                 return {str(k): str(v) for k, v in res.items()}
             try:
@@ -169,17 +180,24 @@ class _RequestProxy:
                 pass
         return {}
 
-    @property
-    def files(self) -> dict[str, object]:
-        """获取上传文件映射字典。"""
+    async def files(self) -> dict[str, object]:
+        """读取宿主异步上传文件，同时兼容旧版文件映射。
+
+        Returns:
+            表单字段名与宿主文件对象；读取错误由上传接口处理。
+        """
         target = self._get_target()
         if target is None:
             return {}
         res = getattr(target, "files", None)
+        if callable(res):
+            res = res()
+        if inspect.isawaitable(res):
+            res = await res
         if res is not None:
-            if isinstance(res, dict):
+            if is_string_mapping(res):
                 return dict(res)
-            if hasattr(res, "items") and not callable(res):
+            if isinstance(res, UploadedFileMapping):
                 return dict(res.items())
         return {}
 
@@ -196,7 +214,7 @@ class _RequestProxy:
                 res = fn()
                 if inspect.isawaitable(res):
                     res = await res
-                if isinstance(res, dict):
+                if is_string_mapping(res):
                     return dict(res)
             except Exception:
                 pass
@@ -216,7 +234,7 @@ class _RequestProxy:
                     b = b.decode("utf-8", errors="replace")
                 if isinstance(b, str) and b.strip():
                     parsed = json.loads(b)
-                    if isinstance(parsed, dict):
+                    if is_string_mapping(parsed):
                         return parsed
             except Exception:
                 pass
@@ -258,6 +276,7 @@ def json_response(
     *,
     status_code: int = 200,
     headers: dict[str, str] | None = None,
+    compress: bool = False,
 ) -> WebApiResponse:
     """构造 JSON HTTP 响应。
 
@@ -265,10 +284,58 @@ def json_response(
         data: 响应数据载荷。
         status_code: HTTP 状态码。
         headers: 附加 HTTP 响应标头字典。
+        compress: 对支持 gzip 的客户端压缩较大的文件内容响应。
 
     Returns:
         AstrBot Web 响应对象或兼容字典结构。
     """
+    if compress:
+        # 只压缩明确的文件读取响应；不改变其他业务接口或宿主 Bridge 协议。
+        import gzip
+        import hashlib
+        import json
+
+        accepted = False
+        for option in request.headers.get("accept-encoding", "").split(","):
+            name, *parameters = option.strip().lower().split(";")
+            if name != "gzip":
+                continue
+            quality = 1.0
+            for parameter in parameters:
+                if parameter.strip().startswith("q="):
+                    try:
+                        quality = float(parameter.strip()[2:])
+                    except ValueError:
+                        quality = 0.0
+            accepted = 0 < quality <= 1
+            break
+        if accepted:
+            payload = json.dumps(
+                data, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            if len(payload) >= 65536:
+                try:
+                    from fastapi.responses import Response
+                except ImportError:
+                    pass
+                else:
+                    response_headers = dict(headers or {})
+                    # 浏览器可复用原响应，但每次都校验内容，文件替换后不会读到旧图。
+                    etag = '"' + hashlib.sha256(payload).hexdigest() + '"'
+                    response_headers["ETag"] = etag
+                    response_headers["Cache-Control"] = "private, no-cache"
+                    response_headers["Vary"] = ", ".join(
+                        filter(None, [response_headers.get("Vary"), "Accept-Encoding"])
+                    )
+                    if request.headers.get("if-none-match") == etag:
+                        return Response(status_code=304, headers=response_headers)
+                    response_headers["Content-Encoding"] = "gzip"
+                    return Response(
+                        content=gzip.compress(payload, compresslevel=1, mtime=0),
+                        status_code=status_code,
+                        media_type="application/json",
+                        headers=response_headers,
+                    )
     if _real_json_response is not None and callable(_real_json_response):
         try:
             return _real_json_response(data, status_code=status_code, headers=headers)  # type: ignore[no-any-return, return-value]

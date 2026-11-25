@@ -12,13 +12,23 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Iterable
 from pathlib import Path, PureWindowsPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
-from ....shared.constants import PLUGIN_NAME
+from astrbot.api.provider import Provider
+from astrbot.api.star import StarTools
+
+from ....shared.constants import DEFAULT_CDN_HOST, PLUGIN_NAME
+from ....shared.type_guards import (
+    is_object_list,
+    is_string_key_mapping,
+    is_string_mapping,
+)
+from ....utils.cdn_utils import normalize_cdn_base_url
 from ....utils.logger import logger
+from ...analysis.utils.host_llm_config import get_configured_host_fallback_ids
 from ...config.config_migrator import LEGACY_RENDERING_RESOURCE_KEYS
+from ...config.config_validation import validate_config_for_save
 from ...config.rendering_config import (
     CUSTOM_RESOURCE_OPTION,
     DEFAULT_CUSTOM_T2I_REQUEST_TIMEOUT_MS,
@@ -29,6 +39,10 @@ from ...config.rendering_config import (
 from ...reporting.cdn_probe import probe_template_cdn
 from ...reporting.custom_t2i_client import render_custom_t2i, validate_t2i_image
 from ...reporting.html_renderer import bind_group_html_renderer
+from ...reporting.typst_fonts import FONT_SOURCES, THEME_FONTS
+from ...reporting.typst_renderer import render_typst_probe
+from ...reporting.typst_resources import download_typst_fonts, typst_font_status
+from ..download_control import DownloadCancelled, DownloadControl
 from ..web_compat import WebApiResponse, error_response, json_response, request
 
 if TYPE_CHECKING:
@@ -48,8 +62,8 @@ if TYPE_CHECKING:
     from ...scheduler.auto_scheduler import AutoScheduler
 
 
-def _sanitize_path_segment(segment: str) -> str:
-    cleaned = []
+def sanitize_path_segment(segment: str) -> str:
+    cleaned: list[str] = []
     for ch in segment:
         if ("a" <= ch <= "z") or ("A" <= ch <= "Z") or ch.isdigit() or ch in {"-", "_"}:
             cleaned.append(ch)
@@ -59,9 +73,9 @@ def _sanitize_path_segment(segment: str) -> str:
     return result or "_"
 
 
-def _config_key_to_folder(key_path: str) -> str:
+def config_key_to_folder(key_path: str) -> str:
     """与 AstrBot 官方核心完全一致的 config_key 到存储目录转换规则（以 / 分隔）"""
-    parts = [_sanitize_path_segment(part) for part in key_path.split(".") if part]
+    parts = [sanitize_path_segment(part) for part in key_path.split(".") if part]
     return "/".join(parts) if parts else "_"
 
 
@@ -95,17 +109,19 @@ def _normalize_rendering_config_for_save(new_config: dict[str, object]) -> None:
     if "t2i_rendering" not in new_config:
         return
     rendering_config = new_config["t2i_rendering"]
-    if not isinstance(rendering_config, dict):
+    if not is_string_mapping(rendering_config):
         raise ValueError("t2i_rendering 必须是配置对象")
     if "t2i_rendering_strategies" in rendering_config:
         strategies = rendering_config["t2i_rendering_strategies"]
         if strategies == []:
             strategies = [dict(item) for item in DEFAULT_RENDERING_STRATEGY_PRESETS]
             rendering_config["t2i_rendering_strategies"] = strategies
-        if not isinstance(strategies, list):
+        if not is_object_list(strategies):
             raise ValueError("渲染方案必须是列表")
         priorities: list[int] = []
         for strategy in strategies:
+            if not is_string_mapping(strategy):
+                raise ValueError("渲染方案必须是配置对象")
             normalized = parse_rendering_strategies([strategy])[0]
             priorities.append(normalized["priority"])
             for key in ("cdn_base_url", "google_fonts", "gstatic"):
@@ -153,21 +169,21 @@ def _normalize_comic_references_for_save(
         OSError: 无法创建目录或保存迁移后的参考图。
     """
     comic = new_config.get("daily_comic")
-    if not isinstance(comic, dict):
+    if not is_string_mapping(comic):
         return
     characters = comic.get("comic_characters")
-    if not isinstance(characters, list):
+    if not is_object_list(characters):
         return
-    folder = _config_key_to_folder(
+    folder = config_key_to_folder(
         "daily_comic.comic_characters.templates.character.reference_images"
     )
     for character in characters:
-        if not isinstance(character, dict):
+        if not is_string_mapping(character):
             continue
         if not character.get("__template_key"):
             character["__template_key"] = "character"
         references = character.get("reference_images")
-        if not isinstance(references, list):
+        if not is_object_list(references):
             continue
         cleaned: list[object] = []
         for item in references:
@@ -209,6 +225,24 @@ def _normalize_comic_references_for_save(
         character["reference_images"] = cleaned
 
 
+class HostLlmProviderDTO(TypedDict):
+    """供只读展示使用的模型信息，不包含密钥或完整 Provider 配置。"""
+
+    id: str
+    name: str
+    model: str
+    available: bool
+    provider: NotRequired[str]
+
+
+class HostLlmConfigDTO(TypedDict):
+    """宿主生效模型及配置回退列表。"""
+
+    primary_id: str | None
+    fallback_ids: list[str]
+    providers: list[HostLlmProviderDTO]
+
+
 class ConfigRoutes:
     """插件配置中心 Web API 路由处理器。"""
 
@@ -223,11 +257,181 @@ class ConfigRoutes:
         report_dispatcher: ReportDispatcher | None = None,
         context: Context | None = None,
         auto_scheduler: AutoScheduler | None = None,
+        downloads: DownloadControl | None = None,
     ) -> None:
         self.analysis_service = analysis_service
         self.report_dispatcher = report_dispatcher
         self.context = context
         self.auto_scheduler = auto_scheduler
+        self._typst_font_lock = asyncio.Lock()
+        self.downloads = downloads or DownloadControl()
+
+    async def api_typst_fonts(self) -> WebApiResponse:
+        """读取插件 data 目录中可用的 Typst 字体状态。
+
+        Returns:
+            已安装文件和仍需下载的预设字体，不扫描宿主系统。
+        """
+        return json_response(
+            {
+                "status": "ok",
+                "data": typst_font_status(Path(StarTools.get_data_dir(PLUGIN_NAME))),
+            }
+        )
+
+    async def api_download_typst_fonts(self) -> WebApiResponse:
+        """从选定 CDN 下载固定字体预设到插件自己的数据目录。
+
+        Returns:
+            下载后的字体状态；错误地址返回 400，重复请求返回 409。
+        """
+        try:
+            body = await request.json()
+            if type(body) is not dict:
+                raise ValueError("无效请求")
+            raw_cdn = body.get("cdn_base_url", DEFAULT_CDN_HOST)
+            if not isinstance(raw_cdn, str):
+                raise ValueError("CDN 必须是字符串")
+            source = body.get("source", "cdn")
+            if source not in ("cdn", "github"):
+                raise ValueError("未知字体下载来源")
+            cdn = (
+                DEFAULT_CDN_HOST
+                if source == "github"
+                else normalize_cdn_base_url(raw_cdn or DEFAULT_CDN_HOST)
+            )
+            theme = body.get("theme")
+            if theme is not None and (
+                not isinstance(theme, str) or theme not in THEME_FONTS
+            ):
+                raise ValueError("未知 Typst 模板")
+            name = body.get("name")
+            allowed = THEME_FONTS[theme] if isinstance(theme, str) else FONT_SOURCES
+            if name is not None and (not isinstance(name, str) or name not in allowed):
+                raise ValueError("请选择所选模板使用的预设字体")
+        except (ValueError, TypeError):
+            return error_response("请选择有效的模板、字体和下载来源", status_code=400)
+        if self._typst_font_lock.locked():
+            return error_response("字体正在下载，请等待完成后刷新", status_code=409)
+        try:
+            async with (
+                self.downloads.track(body.get("download_id")),
+                self._typst_font_lock,
+            ):
+                status = await download_typst_fonts(
+                    Path(StarTools.get_data_dir(PLUGIN_NAME)),
+                    cdn or DEFAULT_CDN_HOST,
+                    theme=theme,
+                    name=name,
+                    source=source,
+                    on_progress=lambda value: self.downloads.update_progress(
+                        body.get("download_id"), value
+                    ),
+                )
+            return json_response({"status": "ok", "data": status})
+        except DownloadCancelled:
+            return error_response("下载已取消，已完成的字体会保留", status_code=409)
+        except ValueError as exc:
+            logger.warning(f"Typst 字体下载未完成：{exc}")
+            return error_response(str(exc), status_code=502)
+        except Exception as exc:
+            logger.warning(f"Typst 字体下载未完成：{type(exc).__name__}: {exc}")
+            return error_response(
+                "字体下载未完成，请检查插件服务器网络、代理与目录写入权限；已下载的字体会保留",
+                status_code=502,
+            )
+
+    async def api_get_host_llm_config(self) -> WebApiResponse:
+        """只读查询默认配置或指定群会话的模型继承信息。
+
+        Returns:
+            仅包含模型标识、名称、可用状态及配置顺序的响应。
+
+        Raises:
+            asyncio.CancelledError: 查询被上层取消时传播。
+        """
+        platform_id = (request.query.get("platform_id") or "").strip()
+        group_id = (request.query.get("group_id") or "").strip()
+        if bool(platform_id) != bool(group_id) or any(
+            len(value) > 512 or any(ch in value for ch in "\r\n")
+            for value in (platform_id, group_id)
+        ):
+            return error_response("请选择完整的机器人实例和群会话", status_code=400)
+        umo = f"{platform_id}:GroupMessage:{group_id}" if group_id else None
+        if self.context is None:
+            return error_response("宿主上下文尚未就绪，请稍后刷新", status_code=503)
+        try:
+            fallback_ids = get_configured_host_fallback_ids(
+                self.context.get_config(umo=umo)
+            )
+            try:
+                primary = await self.context.get_using_provider_async(umo=umo)
+                primary_id = primary.meta().id if primary else None
+            except Exception as exc:
+                logger.warning(f"读取宿主当前模型失败: {type(exc).__name__}")
+                primary_id = None
+
+            # 沿用注册顺序，便于说明宿主无首选模型时的现有兜底选择。
+            available_ids: list[str] = []
+            for provider in self.context.get_all_providers():
+                try:
+                    available_ids.append(provider.meta().id)
+                except Exception as exc:
+                    # 单个模型元数据异常不应遮挡其他模型；无法确认标识时跳过。
+                    logger.warning(
+                        f"跳过无法读取元数据的宿主模型: {type(exc).__name__}"
+                    )
+            ids: list[str] = available_ids + fallback_ids
+            if primary_id:
+                ids.append(primary_id)
+            providers: list[HostLlmProviderDTO] = []
+            for pid in dict.fromkeys(ids):
+                name = pid
+                model = ""
+                available = False
+                provider = ""
+                try:
+                    candidate = self.context.get_provider_by_id(pid)
+                    if isinstance(candidate, Provider):
+                        # 宿主的原始配置尚无完整类型，只在边界收窄后读取展示字段。
+                        raw_config: object = getattr(candidate, "provider_config", None)
+                        config = raw_config if is_string_mapping(raw_config) else {}
+                        configured_name = config.get("name")
+                        configured_model = config.get("model")
+                        configured_provider = config.get("provider")
+                        if isinstance(configured_name, str) and configured_name:
+                            name = configured_name
+                        model = candidate.get_model() or (
+                            configured_model
+                            if isinstance(configured_model, str)
+                            else ""
+                        )
+                        available = True
+                        if isinstance(configured_provider, str):
+                            provider = configured_provider.strip()
+                except Exception as exc:
+                    # 保留已知模型标识并标记不可用，不返回可能含密钥的异常正文。
+                    logger.warning(f"读取宿主模型展示信息失败: {type(exc).__name__}")
+                item: HostLlmProviderDTO = {
+                    "id": pid,
+                    "name": name,
+                    "model": model,
+                    "available": available,
+                }
+                if provider:
+                    item["provider"] = provider
+                providers.append(item)
+            data: HostLlmConfigDTO = {
+                "primary_id": primary_id,
+                "fallback_ids": fallback_ids,
+                "providers": providers,
+            }
+            return json_response({"status": "ok", "data": data})
+        except Exception as exc:
+            logger.warning(f"读取宿主模型配置失败: {type(exc).__name__}")
+            return error_response(
+                "无法读取宿主模型配置，请稍后刷新或检查宿主状态", status_code=503
+            )
 
     async def api_get_config(self) -> WebApiResponse:
         """获取插件当前配置数据与完整 Schema 结构定义"""
@@ -241,23 +445,27 @@ class ConfigRoutes:
                     else None
                 )
             )
-            config_dict = {}
+            config_dict: dict[str, object] = {}
             revision = _config_revision(config_dict)
             if cfg_mgr:
                 cfg_mgr.refresh_rendering_schema_options()
-                config_dict = {str(k): v for k, v in cfg_mgr.config.items()}
+                config_dict = (
+                    dict(cfg_mgr.config) if is_string_mapping(cfg_mgr.config) else {}
+                )
                 revision = _config_revision(config_dict)
                 rendering = config_dict.get("t2i_rendering")
-                if isinstance(rendering, dict):
+                if is_string_mapping(rendering):
                     raw = rendering.get("t2i_rendering_strategies") or list(
                         DEFAULT_RENDERING_STRATEGY_PRESETS
                     )
                     try:
                         # 只补齐编辑视图，不写盘；保留顺序和扩展字段，迁移服务条目类型。
-                        projected = []
-                        if not isinstance(raw, list):
+                        projected: list[dict[str, object]] = []
+                        if not is_object_list(raw):
                             raise ValueError("渲染方案必须是列表")
                         for item in raw:
+                            if not is_string_mapping(item):
+                                raise ValueError("渲染方案必须是配置对象")
                             normalized = parse_rendering_strategies([item])[0]
                             projected_item = {**item, **normalized}
                             if normalized["render_service"] != "custom":
@@ -343,7 +551,7 @@ class ConfigRoutes:
             if type(body) is not dict:
                 raise ValueError("请提供有效的 T2I 测试配置")
             service = body.get("render_service", "custom")
-            if service not in ("astrbot", "custom"):
+            if service not in ("astrbot", "custom", "typst"):
                 raise ValueError("请选择有效的渲染服务")
             group_id = body.get("group_id", "")
             platform_id = body.get("platform_id", "")
@@ -366,6 +574,7 @@ class ConfigRoutes:
                                 "service_token",
                                 "timeout",
                                 "request_timeout",
+                                "raster_ppi",
                             )
                             if key in body
                         },
@@ -374,7 +583,8 @@ class ConfigRoutes:
             )[0]
         except (ValueError, TypeError):
             return error_response(
-                "请检查渲染服务、地址、Token、超时和测试群聊是否有效", status_code=400
+                "请检查渲染服务、地址、Token、超时、导出清晰度和测试群聊是否有效",
+                status_code=400,
             )
 
         started = time.perf_counter()
@@ -393,7 +603,16 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
 <body><strong>T2I 渲染测试</strong><p>这是一张测试图片。</p>
 <p>HTML → PNG · 0123456789</p></body></html>"""
         try:
-            if service == "custom":
+            if service == "typst":
+                image = await render_typst_probe(
+                    Path(StarTools.get_data_dir(PLUGIN_NAME)),
+                    {
+                        "render_service": "typst",
+                        "timeout": plan["timeout"],
+                        "raster_ppi": plan.get("raster_ppi", 144),
+                    },
+                )
+            elif service == "custom":
                 image = await render_custom_t2i(
                     plan["service_endpoint"],
                     html,
@@ -451,7 +670,7 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
         except TimeoutError as exc:
             message = (
                 str(exc)
-                if service == "custom"
+                if service in ("custom", "typst")
                 else "T2I 服务响应超时，请检查服务状态和网络，并查看 AstrBot 日志。"
             )
             return error_response(message, status_code=502)
@@ -459,7 +678,7 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
             # 宿主和第三方包装器的异常可能含服务地址或凭据，不直接回显。
             message = (
                 str(exc)
-                if service == "custom"
+                if service in ("custom", "typst")
                 else (
                     "AstrBot 没有返回可用的测试图片，请查看 AstrBot 和 T2I 服务日志。"
                 )
@@ -485,9 +704,11 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
             try:
                 body = await request.json()
             except Exception:
-                body = {}
+                return error_response("请求不是有效的 JSON 配置", status_code=400)
+            if not is_string_mapping(body):
+                return error_response("保存请求必须是配置对象", status_code=400)
             new_config = body.get("config")
-            if not isinstance(new_config, dict):
+            if not is_string_mapping(new_config):
                 return error_response("缺少有效的 config 配置数据", status_code=400)
 
             save_dto: ConfigSaveDTO = {"config": new_config}
@@ -529,17 +750,17 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
                 return error_response(str(exc), status_code=400)
 
             daily_comic_config = new_config.get("daily_comic")
-            if isinstance(daily_comic_config, dict):
+            if is_string_mapping(daily_comic_config):
                 daily_comic_config.pop("drawing_reference_image", None)
 
             auto_analysis_config = new_config.get("auto_analysis")
-            if isinstance(auto_analysis_config, dict) and (
+            if is_string_mapping(auto_analysis_config) and (
                 "auto_analysis_time" in auto_analysis_config
             ):
                 configured_times = auto_analysis_config["auto_analysis_time"]
                 if isinstance(configured_times, str):
                     configured_times = [configured_times]
-                if not isinstance(configured_times, list):
+                if not is_object_list(configured_times):
                     return error_response(
                         "自动分析时间必须是 HH:MM 格式的字符串列表",
                         status_code=400,
@@ -562,6 +783,13 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
                             f"无效的自动分析时间：{time_value}，有效范围为 00:00-23:59",
                             status_code=400,
                         )
+                # 旧版单个时间字符串沿用原有接收方式，落盘统一为列表。
+                auto_analysis_config["auto_analysis_time"] = configured_times
+
+            try:
+                validate_config_for_save(new_config, config_obj)
+            except ValueError as exc:
+                return error_response(str(exc), status_code=400)
 
             try:
                 _normalize_comic_references_for_save(
@@ -569,28 +797,51 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
                 )
             except ValueError as exc:
                 return error_response(str(exc), status_code=400)
-            for key, value in save_dto["config"].items():
+            updates = save_dto["config"]
+            previous_values: dict[str, object] = {
+                key: config_obj[key] for key in updates if key in config_obj
+            }
+            for key, value in updates.items():
                 config_obj[key] = value
 
-            if cfg_mgr:
-                cfg_mgr.save_config()
+            save_warnings: list[str] = []
+            try:
+                if cfg_mgr and cfg_mgr.save_config() is False:
+                    save_warnings.append("部分配置刷新未完成")
+            except Exception:
+                # 写盘失败时恢复运行中的配置，草稿仍可用原版本重试。
+                for key in updates:
+                    if key in previous_values:
+                        config_obj[key] = previous_values[key]
+                    elif key in config_obj:
+                        del config_obj[key]
+                raise
 
             saved_revision = _config_revision(config_obj)
 
             if self.auto_scheduler is not None and self.context is not None:
-                self.auto_scheduler.schedule_jobs(self.context)
-                if self.auto_scheduler.incremental_trigger is not None:
-                    await (
-                        self.auto_scheduler.incremental_trigger.refresh_target_states()
-                    )
+                try:
+                    self.auto_scheduler.schedule_jobs(self.context)
+                    if self.auto_scheduler.incremental_trigger is not None:
+                        # 配置已落盘，调度刷新不能无限占用保存请求或伪装成写盘失败。
+                        await asyncio.wait_for(
+                            self.auto_scheduler.incremental_trigger.refresh_target_states(),
+                            timeout=5,
+                        )
+                except Exception:
+                    logger.warning("配置已保存，但调度刷新未完成。", exc_info=True)
+                    save_warnings.append("调度刷新未完成")
 
             logger.info("WebUI 配置中心已更新并保存插件配置。")
+            save_message = "配置已成功保存并持久化生效"
+            if save_warnings:
+                save_message = f"配置已保存，但{'、'.join(save_warnings)}；请检查运行日志并重新加载插件。"
+            # 只返回保存回执；宿主会自动解包 data，回传整份配置会丢失状态和新版本。
             return json_response(
                 {
                     "status": "ok",
-                    "message": "配置已成功保存并持久化生效",
+                    "message": save_message,
                     "revision": saved_revision,
-                    "data": dict(config_obj),
                 }
             )
         except Exception as e:
@@ -614,7 +865,7 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
                     "daily_comic.comic_characters.templates.character.reference_images"
                 )
 
-            folder = _config_key_to_folder(config_key)
+            folder = config_key_to_folder(config_key)
 
             target_dirs: list[Path] = []
             try:
@@ -657,10 +908,10 @@ font:20px sans-serif}p{font-size:14px;color:#475569}</style></head>
                         uploaded_files = req_files
 
                     getlist_fn = getattr(uploaded_files, "getlist", None)
-                    if callable(getlist_fn) and isinstance(uploaded_files, Iterable):
+                    if callable(getlist_fn) and is_string_key_mapping(uploaded_files):
                         for key in uploaded_files:
                             file_items = getlist_fn(key)
-                            if not isinstance(file_items, list):
+                            if not is_object_list(file_items):
                                 continue
                             for f in file_items:
                                 orig_name = (

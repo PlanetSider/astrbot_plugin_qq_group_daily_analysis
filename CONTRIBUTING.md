@@ -12,6 +12,7 @@
 2. [代码规范与架构准则 (Code & Architecture Standards)](#2-代码规范与架构准则-code--architecture-standards)
    - [2.1 Python 后端开发规范](#21-python-后端开发规范)
    - [2.2 WebUI 前端开发规范 (FSD + Atomic + MVVM)](#22-webui-前端开发规范-fsd--atomic--mvvm)
+   - [2.3 分析提示词变量](#23-分析提示词变量)
 3. [报告模板贡献指南 (Templates Contribution)](#3-报告模板贡献指南-templates-contribution)
    - [3.1 模板目录结构](#31-模板目录结构)
    - [3.2 模板变量对照表](#32-模板变量对照表)
@@ -31,7 +32,7 @@
 cd astrbot_plugin_qq_group_daily_analysis
 
 # 安装开发依赖与测试工具
-uv venv
+uv venv --python 3.12
 uv pip install -r requirements-dev.txt
 
 # 安装 git pre-commit 钩子 (务必同时安装 pre-commit 与 commit-msg 门禁)
@@ -42,7 +43,72 @@ pre-commit install --hook-type pre-commit --hook-type commit-msg
 # npm install -g @evilmartians/lefthook && lefthook install
 ```
 
+### 本地提交与完整检查分工
+
+Lefthook 的 `pre-commit` 只检查暂存的 Python 文件（Ruff 格式与 lint）和 `dashboard/src/` 下的 JS/TS 文件（Oxlint 与 Oxfmt）。检查不自动修改或暂存文件；提交信息检查仍然保留。前端样式、配置和文档也做暂存文件格式检查；生成类型、锁文件、构建产物不交给格式化器。不会在提交时运行全量前端流水线。
+
+每次原子提交无需重新跑全量测试和构建。开发时按影响范围运行定向测试；准备 PR 或完成一组功能修改时，在插件根目录执行相关的完整检查：
+
+```bash
+npx lefthook run check-frontend  # 全量 lint、类型检查、测试和构建
+npx lefthook run check-python   # Ruff、Pyright 和完整 Python 测试
+npx lefthook run check-contract # OpenAPI 一致性与生成类型检查（会更新类型文件）
+```
+
+这些任务是手动入口，不绑定 `pre-push`，也不是 CI 调用入口。CI 独立执行完整验证，不使用本地检查缓存。修改 API 后显式导出 OpenAPI 并生成类型；修改正式前端后，在 PR 前构建并提交 `pages/` 产物。CI 仍检查契约及构建产物与源码的一致性。
+
+同一份代码已验证通过后，`git add`、拆分原子提交、修改提交说明或纯文档调整不要求重跑 pytest / Vitest。记录运行过的命令和覆盖范围；代码、测试、依赖、检查配置或运行环境发生相关变化后，重新运行受影响的检查。定向测试通过不代表全量测试通过，CI 不使用本地结果跳过验证。
+
+手动入口已拆分为 `lint`、`typecheck`、`test`（前端另有 `build`），默认顺序执行，任一步失败就停止。已经运行过完整 pytest 或 Vitest 时，只补缺少的步骤：
+
+```bash
+# pytest 已通过，只补后端静态检查
+npx lefthook run check-python --command lint --command typecheck
+# 只运行完整后端测试
+npx lefthook run check-python --command test
+# Vitest 已通过，只补前端静态检查与构建
+npx lefthook run check-frontend --command lint --command typecheck --command build
+```
+
+开发中直接运行 `uv run pytest tests/test_xxx.py` 等受影响用例；排查失败可用 `uv run pytest --lf tests/`，但这不是完整回归的替代。全量测试只需在相关改动完成后通过一次，不要在同一工作树上依次执行全量 pytest 和包含它的完整检查入口。
+
+Oxlint / Oxfmt 配置、依赖或构建配置变化时，请运行完整前端检查。只改 CSS 等样式也需要在浏览器检查并重新构建。Lefthook 与 Python 的 pre-commit 框架选择一种安装，避免重复挂钩；使用后者时仍按同样要求执行完整检查。
+
+| 日常场景 | 补充验证 |
+| --- | --- |
+| 单个业务函数或组件 | 相关测试；改动完成后补齐所属前端或后端的完整检查 |
+| 删除、移动文件或调整公共接口 | 类型检查及受影响调用方测试，不能仅依靠暂存文件 lint |
+| API / Schema 修改 | 契约检查、生成类型、前后端相关测试 |
+| 依赖、测试配置、构建配置修改 | 重新执行相关完整验证，旧结果不再直接适用 |
+| 纯样式修改 | 浏览器检查及构建；纯说明文档修改通常无需业务测试 |
+| 部分暂存、拆分提交 | 工作树测试通过不等于每个中间提交都独立通过；确保每个提交自洽，不把未提交的修复当作验证依据 |
+
+快速钩子只检查暂存路径对应的文件，不负责推断跨文件影响。手动完整检查没有自动“结果缓存”；选择 `--command` 时需确认省略步骤已有适用于当前代码的有效结果。
+
+### 检查工具与解释器
+
+Python 基线统一为 3.12。`requirements-tools.txt` 固定 Ruff 和 Pyright 的版本，Lefthook、pre-commit 和 CI 都通过 `scripts/check_python.py` 读取它，升级时只需修改这一处。工具通过 uv 的隔离缓存执行，不更新 AstrBot 的工具依赖；首次执行需要下载，后续复用缓存。
+
+Pyright 使用运行检查脚本的 Python 解释器查找依赖，不再混用硬编码的 `site-packages`。嵌入 AstrBot 开发时，`uv run python ...` 使用宿主环境；独立检出时，先安装开发依赖，再用 `.venv/bin/python scripts/check_python.py typecheck`（Windows 为 `.venv/Scripts/python.exe`）。IDE 也应选择同一解释器。`extraPaths` 仅保留插件及嵌入开发时的 AstrBot 源码目录，支持跳转到宿主源码。
+
+如果命令行通过，但 VS Code 提示无法导入 `aiohttp`、`apscheduler` 或 `botpy`，先核对解释器。嵌入开发可运行 `uv run python -c "import sys; print(sys.executable)"`，再通过命令面板的 `Python: 选择解释器` → `输入解释器路径` 选择输出的路径；独立检出则选择已安装开发依赖的插件 `.venv`。仅打开插件目录时，编辑器可能自动选中系统 Python，不会自动沿用 `uv run` 找到的宿主环境。切换后等待 Pylance 重新分析，仍有诊断时再检查具体代码和依赖。不要通过关闭诊断、添加机器专属的 `site-packages` 路径或降低 strict 来消除报错。
+
+Ruff 保留现有测试目录豁免，并启用 `force-exclude`，目录扫描和暂存文件检查使用相同范围；这不影响 pytest 执行测试。旧枚举及泛型语法暂不强制改写，避免工具迁移改变运行时类型行为。引号由 formatter 管理，现代化语法检查统一交给 Ruff `UP`，不再重复运行 pyupgrade。
+
+前端使用 Node.js 20.19+（20.x）或 22.12+，Oxlint 与 Oxfmt 固定版本并提交 pnpm 锁文件。`pnpm lint` 检查代码，`pnpm lint:fix` 修复可自动修复的问题；`pnpm format` 统一格式，`pnpm format:check` 只读检查。类型检查仍使用 `tsc`，行为测试仍使用 Vitest。已有 ESLint 推荐规则按职责映射到 Oxlint，语法和类型检查交给 TypeScript、格式交给 Oxfmt，不自动启用新一代 React Compiler 规则。
+
+弃用接口属于错误：前端在 `.oxlintrc.json` 启用 `options.typeAware` 和 `typescript/no-deprecated`，固定 `oxlint-tsgolint` 开发依赖；暂存文件检查、`pnpm lint`、编辑器和 CI 共用规则，`tsc` 继续独立检查类型。后端 Pyright strict 已能识别弃用声明，`reportDeprecated: "error"` 显式固定该约束；完整检查和 CI 拦截，日常 Ruff 暂存检查不能代替 Pyright。工具链回归会实际调用检查器，验证已弃用 API 被拒绝、替代 API 通过。
+
+检查依赖类型声明中的 `@deprecated`（前端）或 PEP 702 弃用标记（后端），不是按方法名猜测。未标注的第三方弃用接口、动态反射和仅在未来 Python 版本中弃用的接口，仍需结合上游文档与运行测试核对；测试目录的 Python 类型检查范围保持原样，不为通过门禁添加弃用白名单。
+
+VS Code 可安装 `oxc.oxc-vscode` 扩展；仓库已为 JS/TS/React/CSS 配置保存时格式化，JSON 的自动换行设置保持不变。编辑器选择的 Python 环境也应安装 `requirements-tools.txt` 中固定的版本。
+
+首次格式化与业务改动分开审阅；生成的 API 类型和构建产物由各自生成器维护。正式界面与独立 Mock 共用页面和组件，不另建原型入口；开发 Mock 源码参与 lint、格式、类型及测试检查，生产构建排除开发模块。
+
 ### 1.2 WebUI 控制台前端环境
+
+从插件仓库根目录运行以下命令，启动独立的 WebUI 开发页面。
+
 ```bash
 # 进入前端子工程
 cd dashboard
@@ -54,11 +120,25 @@ pnpm install
 pnpm dev
 ```
 
+打开 [WebUI Mock](http://localhost:5175/?devMode=mock)，即可用内置模拟数据调试页面，无需启动 AstrBot。若端口已被占用，以终端显示的地址为准，并在地址末尾保留 `?devMode=mock`。
+
 ---
 
 ## 2. 代码规范与架构准则 (Code & Architecture Standards)
 
 ### 2.1 Python 后端开发规范
+
+#### 类型边界与自动检查
+
+- `src/domain/`：业务数据使用实体、值对象、`TypedDict` 和仓储协议；禁止直接依赖 `application`、`infrastructure` 或 AstrBot。反序列化入口可以接收未知数据，校验后必须返回明确的领域类型。
+- `src/application/`：用例参数、结果和内部服务调用使用明确契约。不要用 `object`、裸 `dict` 或任意键值字典代替已知的业务字段。
+- `src/infrastructure/`：宿主 API、平台响应、数据库 JSON、旧配置等外部入口可以接收 `object`。在边界检查结构和字段类型后再交给业务层，不能仅靠 `cast` 宣称输入合法。
+- 配置备份、原始日志附加信息和模板扩展上下文等确实开放的数据，可以保留 `Mapping[str, object]` 等宽结构；业务读取具体字段时必须收窄。不能借此放宽整条业务链路。
+- 全部生产代码禁止显式 `Any`，包括别名导入、容器成员、返回值和变量注解。Ruff `TID251` 禁止 `typing.Any` / `typing_extensions.Any`，`ANN401` 作为补充；Pyright strict 检查未知类型及缺失泛型参数。第三方库自身的类型缺陷需在适配边界处理，不修改宿主源码。
+- `cast` 仅用于已有可说明依据、但检查器无法表达的收窄，不替代运行时校验。不要批量加忽略、将规则降级或扩大排除范围以通过 strict。
+
+`tests/test_architecture_boundaries.py` 检查领域层的直接静态导入（包括相对导入和 `TYPE_CHECKING` 分支），随完整 pytest 在本地和 CI 执行。它不分析动态导入或传递依赖，业务类型是否表达正确仍需代码审查。Ruff 规则随暂存文件检查及 CI 执行；Pyright 检查生产代码，测试文件继续由 pytest 验证。
+
 
 1. **KISS 原则与内联优先 (Inline-First Rule)**：
    * 优先在主函数内直接实现清晰的线性逻辑，除非满足高复用（$\ge 3$ 处重复）或极端复杂（$>50$ 行破坏主流程），否则**严禁过度抽取无意义的辅助函数**。
@@ -71,7 +151,7 @@ pnpm dev
    * 代码内部所有注释、Log 输出与异常提示必须使用清晰的 **中文**。
 5. **静态类型检查与类型体操准则 (Static Type & Type Gymnastics Standards)**：
    * 本项目统一使用 **Pyright / Pylance** 进行静态类型分析与语法校验，规则配置文件为项目根目录的 [`pyrightconfig.json`](pyrightconfig.json)；
-   * **类型检查模式与环境对齐**：采用严格生产标准的 `"typeCheckingMode": "standard"`，统一设置 `"pythonVersion": "3.12"`，严格对齐 AstrBot 依赖环境；
+   * **类型检查模式与环境对齐**：采用 `"typeCheckingMode": "strict"`，统一设置 `"pythonVersion": "3.12"`，严格对齐 AstrBot 依赖环境；
    * **严格模块导入与重写门禁**：开启 `"reportMissingImports": "error"`, `"reportIncompatibleMethodOverride": "error"`, `"reportFunctionMemberAccess": "error"`, `"reportUntypedFunctionDecorator": "error"`, `"reportUntypedBaseClass": "error"`；
    * **严禁滥用 `Any` (Zero `Any` Abuse Policy)**：
      - **接口协议化 (`Protocol`)**：跨模块、跨平台的动态处理器一律使用 `typing.Protocol` 与 `@runtime_checkable` 声明契约方法（如 `TemplatePreviewHandler`），严禁使用 `list[Any]`；
@@ -79,7 +159,7 @@ pnpm dev
      - **可选依赖与动态调度**：Telegram、Discord 等按需加载的可选依赖，统一使用 `if TYPE_CHECKING:` 导入静态类型；动态调用必须使用 `inspect.isawaitable` 或安全收窄守卫；
    * 提交前必须在插件根目录下运行 Pyright 检查，确保 **0 错误、0 警告**：
      ```bash
-     npx pyright
+     uv run python scripts/check_python.py typecheck
      ```
 6. **DDD 领域驱动设计与领域类型优先 (DDD & Domain Types First)**：
    * **领域层 (`src/domain/`)**：纯业务核心，不依赖具体外部框架与基础设施；
@@ -106,10 +186,10 @@ pnpm dev
      ```
    * 这一实践在保证插件运行期弹性解耦与容错的同时，实现了插件与 AstrBot 底层交互时 100% 强类型智能提示与源码直达跳转。
 8. **一键格式化、自动修复 Lint 与单元测试**：
-   * 强烈推荐使用一键格式化与自动修复指令（自动消除未使用的 import、调整 import 顺序及代码风格），提交前保证静态类型检查与测试全部通过：
+   * 强烈推荐使用一键格式化与自动修复指令（自动消除未使用的 import、调整 import 顺序及代码风格），准备后端 PR 时确认以下检查已通过；同一份代码已有通过结果时不要重复执行：
      ```bash
-     uv run ruff format . ; uv run ruff check . --fix
-     npx pyright
+     uv run python scripts/check_python.py format . ; uv run python scripts/check_python.py lint . --fix
+     uv run python scripts/check_python.py typecheck
      uv run pytest tests/
      ```
 
@@ -151,7 +231,7 @@ dashboard/src/
    * **ViewModel (`use*ViewModel.ts`)**：集中封装网络请求、防抖、排序、衍生计算及缓存失效；
    * **View (`*Page.tsx`)**：仅作为纯声明式 UI，禁止在 JSX 组件中内联 API 请求或复杂业务算法。
 2. **零 `any` 策略 (Zero `any` Policy)**：
-   * 全量开启 `@typescript-eslint/no-explicit-any: 'error'`；
+   * 全量开启 `typescript/no-explicit-any: 'error'`；
    * 外部未定型数据一律使用 `unknown` 并配合类型守卫；
    * 宿主 Bridge 通信在 `shared/api/bridge.ts` 中维护强类型定义。
 3. **冷数据缓存与精准失效**：
@@ -159,12 +239,22 @@ dashboard/src/
    * 依托 SSE 实时事件在任务状态流转时主动淘汰相关缓存，确保数据 100% 同步。
 4. **构建输出规范**：
    * Vite 配置固定产物输出为 `pages/daily-analysis/assets/index.js`，避免动态哈希造成 Git 历史膨胀。
-5. **前端静态检查命令**：
+5. **模块引用**：
+   * 跨目录使用 `@/<层>/<模块>/...`，例如 `@/shared/ui/button`。同目录或直接子目录可用 `./`。Oxlint 在本地提交和 CI 中拦截向上查找的模块引用。
+   * 插件配置与共享漫画目录分别使用 `@plugin-config` 和 `@comic-catalog`。测试可使用 `@plugin-tests/...` 引用仓库测试数据，该别名仅在测试运行时启用。TypeScript、Vite 和 Vitest 共用 `dashboard/tsconfig.json` 中的路径定义。
+   * Python 插件内部使用包内导入，例如 `from ...shared.constants import PLUGIN_NAME`。AstrBot 按安装目录生成插件包名，生产代码不要使用顶层 `src` 或写死 `data.plugins` 下的插件包名。
+6. **前端静态检查命令**：
    ```bash
    pnpm lint        # 必须 0 警告 0 错误
    pnpm typecheck   # TypeScript 严格类型编译
    pnpm build       # 打包输出单 Bundle
    ```
+
+### 2.3 分析提示词变量
+
+分析器通过 `render_template` 传入运行时的数据。新增变量时，在 `_conf_schema.json` 对应提示词字段的 `prompt_variables` 中声明同名变量、用途、示例与是否必填。编辑器和保存校验读取同一份声明。示例应符合分析器加工后的格式，使用演示数据。数量上限可用 `config_field` 指向「分析功能开关」中的配置键。
+
+为新模块接入方案时，在提示词字段旁声明同名加 `_schemes` 后缀的隐藏列表，默认值为 `[]`。分析器继续从原字段读取选中的正文，宿主配置保存全部方案。
 
 ---
 
@@ -303,19 +393,19 @@ uv run scripts/debug_render.py -h
 
 1. **Fork 本仓库** 到个人 GitHub 账号；
 2. 从 `main` 分支切出特性分支（如 `feat/my-new-template` 或 `fix/onebot-retry`）；
-3. 本地编写代码，并运行全套质量检查流水线（需保证 0 错误、0 警告）：
+3. 开发时执行定向检查，准备 PR 时补齐相关完整验证（已通过且未受后续改动影响的检查无需重跑）：
    ```bash
    # 1. 自动格式化并修复 Lint 问题
-   uv run ruff format . ; uv run ruff check . --fix
+   uv run python scripts/check_python.py format . ; uv run python scripts/check_python.py lint . --fix
 
    # 2. 静态类型检查
-   npx pyright
+   uv run python scripts/check_python.py typecheck
 
    # 3. 运行全量单元测试
    uv run pytest tests/
 
    # 4. WebUI 前端静态检查与打包（若改动了 dashboard/ 源码）
-   cd dashboard && pnpm lint && pnpm typecheck && pnpm build
+   cd dashboard && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build:no-typecheck
    ```
 4. 提交清晰规范的 Commit 并推送到你的 Remote 分支；
 5. 在 GitHub 上发起 Pull Request，在 Description 中简要说明改动意图及测试验证结论；

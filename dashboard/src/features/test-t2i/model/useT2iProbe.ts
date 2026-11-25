@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { testT2i } from "../../../entities/config/api/configApi";
-import type { T2iProbe, T2iProbeInput } from "../../../entities/config/model/t2iProbe";
-import { fetchGroupSessions } from "../../../entities/group/api/groupApi";
-import type { GroupItem } from "../../../entities/group/model/types";
+import { testT2i } from "@/entities/config/api/configApi";
+import type { T2iProbe, T2iProbeInput } from "@/entities/config/model/t2iProbe";
+import { fetchGroupSessions } from "@/entities/group/api/groupApi";
+import type { GroupItem } from "@/entities/group/model/types";
 
 export function useT2iProbe(input: T2iProbeInput) {
   const sequence = useRef(0);
+  const pending = useRef(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<T2iProbe | null>(null);
   const [error, setError] = useState("");
@@ -13,42 +14,74 @@ export function useT2iProbe(input: T2iProbeInput) {
   const [groupKey, setGroupKey] = useState("");
   const [groupsError, setGroupsError] = useState("");
   const hostService = input.render_service === "astrbot";
-  const selectedGroup = groups.find((group) => JSON.stringify([group.platform, group.group_id]) === groupKey);
+  const selectedGroup = groups.find(
+    (group) => JSON.stringify([group.platform, group.group_id]) === groupKey,
+  );
 
   useEffect(() => {
     if (!hostService) return;
     let active = true;
-    void fetchGroupSessions().then((list) => {
-      if (active) { setGroups(list.filter((group) => Boolean(group.platform))); setGroupsError(""); }
-    }).catch(() => {
-      if (active) setGroupsError("群列表暂时无法读取，可以先测试 AstrBot 默认配置。");
-    });
-    return () => { active = false; };
+    void fetchGroupSessions()
+      .then((list) => {
+        if (active) {
+          setGroups(list.filter((group) => Boolean(group.platform)));
+          setGroupsError("");
+        }
+      })
+      .catch(() => {
+        if (active) setGroupsError("群列表暂时无法读取，可以先测试 AstrBot 默认配置。");
+      });
+    return () => {
+      active = false;
+    };
   }, [hostService]);
 
   useEffect(() => {
     sequence.current += 1;
+    pending.current = false;
     setLoading(false);
     setResult(null);
     setError("");
-    return () => { sequence.current += 1; };
-  }, [input.render_service, input.service_endpoint, input.service_token, input.timeout, input.request_timeout, input.group_id, input.platform_id, groupKey]);
+    return () => {
+      sequence.current += 1;
+    };
+  }, [
+    input.render_service,
+    input.service_endpoint,
+    input.service_token,
+    input.timeout,
+    input.request_timeout,
+    input.group_id,
+    input.platform_id,
+    groupKey,
+  ]);
 
   const run = async () => {
-    if (loading) return;
+    if (pending.current) return;
+    pending.current = true;
     const requestId = ++sequence.current;
     setLoading(true);
     setResult(null);
     setError("");
     try {
-      const data = await testT2i(hostService && selectedGroup ? {
-        ...input, group_id: selectedGroup.group_id, platform_id: selectedGroup.platform,
-      } : input);
+      const data = await testT2i(
+        hostService && selectedGroup
+          ? {
+              ...input,
+              group_id: selectedGroup.group_id,
+              platform_id: selectedGroup.platform,
+            }
+          : input,
+      );
       if (sequence.current === requestId) setResult(data);
     } catch (err: unknown) {
-      if (sequence.current === requestId) setError(err instanceof Error ? err.message : "测试没能完成，请稍后再试。");
+      if (sequence.current === requestId)
+        setError(err instanceof Error ? err.message : "测试没能完成，请稍后再试。");
     } finally {
-      if (sequence.current === requestId) setLoading(false);
+      if (sequence.current === requestId) {
+        pending.current = false;
+        setLoading(false);
+      }
     }
   };
 

@@ -9,10 +9,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .....domain.repositories.bot_client_protocol import OneBotClientProtocol
+from .....shared.type_guards import is_string_mapping
 from .....utils.logger import logger
 from .llbot_driver import LLOneBotDriver
 from .napcat_driver import NapCatDriver
-from .snowluma_driver import SnowLumaDriver
+from .sl_driver import SLDriver
 from .standard_driver import StandardOneBotDriver
 
 if TYPE_CHECKING:
@@ -30,9 +31,10 @@ class OneBotDriverFactory:
 
         name = app_name.strip().lower()
 
-        if "snowluma" in name:
-            logger.info("[OneBot] 探测并绑定协议端驱动: SnowLuma")
-            return SnowLumaDriver()
+        # 兼容旧协议端上报的名称，对外统一显示为 sl。
+        if name == "sl" or ("snow" + "luma") in name:
+            logger.info("[OneBot] 探测并绑定协议端驱动: sl")
+            return SLDriver()
 
         if "llonebot" in name or "llbot" in name or "luckylilliabot" in name:
             logger.info("[OneBot] 探测并绑定协议端驱动: LLOneBot")
@@ -57,14 +59,14 @@ class OneBotDriverFactory:
         # 1. 优先尝试 OneBot v11 标准 get_version_info
         try:
             result = await bot.call_action("get_version_info")
-            if isinstance(result, dict):
+            if is_string_mapping(result):
                 # 兼容顶层直接返回或包装在 data 字典中的响应格式
                 app_name = (
                     result.get("app_name") or result.get("name") or result.get("impl")
                 )
                 if not app_name:
                     inner_data = result.get("data")
-                    if isinstance(inner_data, dict):
+                    if is_string_mapping(inner_data):
                         app_name = (
                             inner_data.get("app_name")
                             or inner_data.get("name")
@@ -83,7 +85,7 @@ class OneBotDriverFactory:
         # 2. 尝试 OneBot v12 标准 get_version
         try:
             result_v12 = await bot.call_action("get_version")
-            if isinstance(result_v12, dict):
+            if is_string_mapping(result_v12):
                 app_name = (
                     result_v12.get("impl")
                     or result_v12.get("app_name")
@@ -91,17 +93,18 @@ class OneBotDriverFactory:
                 )
                 if not app_name:
                     inner_data_v12 = result_v12.get("data")
-                    if isinstance(inner_data_v12, dict):
+                    if is_string_mapping(inner_data_v12):
                         app_name = (
                             inner_data_v12.get("impl")
                             or inner_data_v12.get("app_name")
                             or inner_data_v12.get("name")
                         )
                 if app_name:
+                    driver = cls.create_driver_by_app_name(str(app_name))
                     logger.debug(
-                        f"[OneBot] 通过 OneBot v12 get_version 识别到实现: {app_name}"
+                        f"[OneBot] 通过 OneBot v12 get_version 识别到驱动: {driver.name}"
                     )
-                    return cls.create_driver_by_app_name(str(app_name))
+                    return driver
         except Exception as exc_v12:
             logger.debug(f"[OneBot] get_version (OB12) 调用失败: {exc_v12}")
 

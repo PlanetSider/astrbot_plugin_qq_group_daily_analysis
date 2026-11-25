@@ -12,6 +12,10 @@ import re
 from typing import TYPE_CHECKING
 
 from ...shared.constants import AnalysisStage
+from ...shared.type_guards import (
+    is_object_list,
+    is_string_mapping,
+)
 
 if TYPE_CHECKING:
     from ...infrastructure.config.config_manager import ConfigManager
@@ -189,6 +193,7 @@ class ReportQueryService:
         start_date: str,
         end_date: str,
         report_section: str = "全部",
+        platform_id: str | None = None,
     ) -> str:
         """执行群分析报告综合检索与文本组装。
 
@@ -201,7 +206,7 @@ class ReportQueryService:
         Returns:
             str: 格式化的 Markdown 结果文本。
         """
-        group_name = self._get_cached_group_name(group_id)
+        group_name = self._get_cached_group_name(group_id, platform_id)
         sections = self._parse_sections(report_section)
 
         # 1. 查询热轨：CheckpointStore (优先常规分析 LLM_ANALYSIS，若无则尝试按需分析 ON_DEMAND_ANALYSIS)
@@ -209,7 +214,31 @@ class ReportQueryService:
         is_latest_query = not bool(start_date and end_date)
 
         if self.checkpoint_store:
-            if is_latest_query:
+            if platform_id:
+                dates: list[str | None] = [None]
+                if not is_latest_query:
+                    start = dt.date.fromisoformat(start_date)
+                    end = dt.date.fromisoformat(end_date)
+                    dates = [
+                        (start + dt.timedelta(days=i)).isoformat()
+                        for i in range((end - start).days + 1)
+                    ]
+                for selected_date in dates:
+                    for stage in (
+                        AnalysisStage.LLM_ANALYSIS.value,
+                        AnalysisStage.ON_DEMAND_ANALYSIS.value,
+                    ):
+                        scoped = await asyncio.to_thread(
+                            self._get_latest_checkpoint,
+                            group_id,
+                            stage,
+                            platform_id=platform_id,
+                            date_str=selected_date,
+                        )
+                        if scoped:
+                            reports_data.append(scoped)
+                            break
+            elif is_latest_query:
                 # 获取最新一份 Checkpoint (LLM_ANALYSIS 优先，兜底 ON_DEMAND_ANALYSIS)
                 latest_cp = (
                     await asyncio.to_thread(
@@ -247,7 +276,10 @@ class ReportQueryService:
         probe_notice = ""
         if not reports_data and start_date and start_date == end_date:
             nearby_cp = await asyncio.to_thread(
-                self._probe_nearby_checkpoint, group_id, start_date
+                self._probe_nearby_checkpoint,
+                group_id,
+                start_date,
+                platform_id=platform_id,
             )
             if nearby_cp:
                 reports_data.append(nearby_cp)
@@ -259,7 +291,11 @@ class ReportQueryService:
         # 3. 若热轨仍为空，尝试冷轨降级：HistoryManager (KV)
         if not reports_data and self.history_manager:
             kv_reports = await self._query_history_kv(
-                group_id, start_date, end_date, is_latest_query
+                group_id,
+                start_date,
+                end_date,
+                is_latest_query,
+                platform_id=platform_id or "",
             )
             if kv_reports:
                 reports_data.extend(kv_reports)
@@ -288,7 +324,7 @@ class ReportQueryService:
             return {"topics", "golden_quotes", "user_titles", "chat_quality_review"}
 
         tokens = re.split(r"[,，、| +]+", raw)
-        result = set()
+        result: set[str] = set()
         for tok in tokens:
             t = tok.strip().lower()
             if t in {"话题", "topic", "topics", "主题"}:
@@ -310,6 +346,9 @@ class ReportQueryService:
         self,
         group_id: str,
         stage_name: str = "LLM_ANALYSIS",
+        *,
+        platform_id: str | None = None,
+        date_str: str | None = None,
     ) -> dict[str, object] | None:
         if not self.checkpoint_store:
             return None
@@ -318,6 +357,8 @@ class ReportQueryService:
             offset=0,
             group_id=group_id,
             stage_name=stage_name,
+            platform=platform_id,
+            date_str=date_str,
         )
         if not items:
             return None
@@ -342,7 +383,7 @@ class ReportQueryService:
         return None
 
     def _probe_nearby_checkpoint(
-        self, group_id: str, target_date_str: str
+        self, group_id: str, target_date_str: str, *, platform_id: str | None = None
     ) -> dict[str, object] | None:
         if not self.checkpoint_store:
             return None
@@ -360,6 +401,13 @@ class ReportQueryService:
             AnalysisStage.ON_DEMAND_ANALYSIS.value,
         ):
             for d_str in (prev_date, next_date):
+                if platform_id:
+                    scoped = self._get_latest_checkpoint(
+                        group_id, stage, platform_id=platform_id, date_str=d_str
+                    )
+                    if scoped:
+                        return scoped
+                    continue
                 detail = self.checkpoint_store.get_checkpoint_detail(
                     group_id=group_id,
                     date_str=d_str,
@@ -386,6 +434,7 @@ class ReportQueryService:
         start_date: str,
         end_date: str,
         is_latest_query: bool,
+        platform_id: str = "",
     ) -> list[dict[str, object]]:
         if not self.history_manager:
             return []
@@ -397,7 +446,9 @@ class ReportQueryService:
             today = dt.date.today()
             for offset in range(7):
                 cur_date = (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
-                data = await self.history_manager.get_analysis(group_id, cur_date)
+                data = await self.history_manager.get_analysis(
+                    group_id, cur_date, platform_id=platform_id
+                )
                 if data:
                     results.append(
                         {
@@ -423,7 +474,9 @@ class ReportQueryService:
 
         while cur <= end:
             d_str = cur.strftime("%Y-%m-%d")
-            data = await self.history_manager.get_analysis(group_id, d_str)
+            data = await self.history_manager.get_analysis(
+                group_id, d_str, platform_id=platform_id
+            )
             if data:
                 results.append(
                     {
@@ -461,7 +514,7 @@ class ReportQueryService:
         for r in reports:
             d_str = str(r.get("date_str", "未知日期"))
             data_obj = r.get("data")
-            if not isinstance(data_obj, dict):
+            if not is_string_mapping(data_obj):
                 continue
 
             day_block = [f"#### 📅 报告日期: {d_str}"]
@@ -469,15 +522,16 @@ class ReportQueryService:
             # 建立本报告中的 user_id -> 昵称映射字典，用于替换话题正文中的裸数字 ID 引用
             id_to_name: dict[str, str] = {}
             user_analysis = data_obj.get("user_analysis")
-            if isinstance(user_analysis, dict):
+            if is_string_mapping(user_analysis):
                 for uid, udata in user_analysis.items():
-                    if isinstance(udata, dict):
+                    if is_string_mapping(udata):
                         for k in ("nickname", "name", "card"):
                             if udata.get(k):
                                 id_to_name[str(uid).strip()] = str(udata[k]).strip()
                                 break
-            for ut in data_obj.get("user_titles") or []:
-                if isinstance(ut, dict):
+            raw_titles = data_obj.get("user_titles")
+            for ut in raw_titles if is_object_list(raw_titles) else []:
+                if is_string_mapping(ut):
                     uid = str(ut.get("user_id") or "").strip()
                     uname = str(
                         ut.get("name")
@@ -487,8 +541,9 @@ class ReportQueryService:
                     ).strip()
                     if uid and uname and uname != uid:
                         id_to_name.setdefault(uid, uname)
-            for gq in data_obj.get("golden_quotes") or []:
-                if isinstance(gq, dict):
+            raw_quotes = data_obj.get("golden_quotes")
+            for gq in raw_quotes if is_object_list(raw_quotes) else []:
+                if is_string_mapping(gq):
                     uid = str(gq.get("user_id") or "").strip()
                     uname = str(gq.get("sender") or gq.get("author") or "").strip()
                     if uid and uname and uname != uid:
@@ -497,10 +552,10 @@ class ReportQueryService:
             # 1. 话题提取
             if "topics" in sections:
                 topics_raw = data_obj.get("topics")
-                if isinstance(topics_raw, list) and topics_raw:
+                if is_object_list(topics_raw) and topics_raw:
                     day_block.append("\n**【讨论话题】**")
                     for idx, t in enumerate(topics_raw, 1):
-                        if isinstance(t, dict):
+                        if is_string_mapping(t):
                             t_title = t.get("topic", "") or t.get("title", "")
                             t_desc = t.get("detail", "") or t.get("description", "")
                             t_heat = t.get("heat") or t.get("hot", "")
@@ -517,15 +572,16 @@ class ReportQueryService:
 
             # 2. 金句提取
             if "golden_quotes" in sections:
+                statistics = data_obj.get("statistics")
                 quotes_raw = data_obj.get("golden_quotes") or (
-                    data_obj.get("statistics", {}).get("golden_quotes")
-                    if isinstance(data_obj.get("statistics"), dict)
+                    statistics.get("golden_quotes")
+                    if is_string_mapping(statistics)
                     else None
                 )
-                if isinstance(quotes_raw, list) and quotes_raw:
-                    formatted_quotes = []
+                if is_object_list(quotes_raw) and quotes_raw:
+                    formatted_quotes: list[str] = []
                     for q in quotes_raw:
-                        if isinstance(q, dict):
+                        if is_string_mapping(q):
                             quote_text = str(
                                 q.get("quote", "")
                                 or q.get("content", "")
@@ -554,10 +610,10 @@ class ReportQueryService:
             # 3. 用户称号
             if "user_titles" in sections:
                 titles_raw = data_obj.get("user_titles")
-                if isinstance(titles_raw, list) and titles_raw:
-                    formatted_titles = []
+                if is_object_list(titles_raw) and titles_raw:
+                    formatted_titles: list[str] = []
                     for ut in titles_raw:
-                        if isinstance(ut, dict):
+                        if is_string_mapping(ut):
                             uname = (
                                 str(
                                     ut.get("user_name", "")
@@ -585,7 +641,7 @@ class ReportQueryService:
             # 4. 聊天质量分析
             if "chat_quality_review" in sections:
                 quality_raw = data_obj.get("chat_quality_review")
-                if isinstance(quality_raw, dict) and quality_raw:
+                if is_string_mapping(quality_raw) and quality_raw:
                     summary = quality_raw.get("summary", "")
                     atmosphere = quality_raw.get("atmosphere", "")
                     depth = quality_raw.get("depth", "")
@@ -613,13 +669,21 @@ class ReportQueryService:
 
         return full_content
 
-    def _get_cached_group_name(self, group_id: str) -> str:
+    def _get_cached_group_name(
+        self, group_id: str, platform_id: str | None = None
+    ) -> str:
         if not self.trace_store:
             return ""
         try:
-            groups = self.trace_store.get_distinct_groups()
+            groups = (
+                self.trace_store.get_distinct_groups(by_session=True)
+                if platform_id
+                else self.trace_store.get_distinct_groups()
+            )
             for g in groups:
-                if str(g.get("group_id", "")) == str(group_id):
+                if str(g.get("group_id", "")) == str(group_id) and (
+                    not platform_id or g.get("platform") == platform_id
+                ):
                     return str(g.get("group_name", ""))
         except Exception:
             pass

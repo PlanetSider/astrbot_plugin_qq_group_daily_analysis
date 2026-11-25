@@ -158,7 +158,7 @@ def test_traditional_analysis_is_failed_when_report_delivery_fails():
             comic_command_handler=mock_comic_handler
         )
 
-        result = await scheduler._perform_auto_analysis_for_group(
+        result = await scheduler.perform_auto_analysis_for_group(
             "123456", "onebot-main"
         )
 
@@ -177,7 +177,7 @@ def test_traditional_analysis_is_failed_when_report_delivery_fails():
         }
         scheduler.report_dispatcher.dispatch.side_effect = None
         scheduler.report_dispatcher.dispatch.return_value = True
-        result = await scheduler._perform_auto_analysis_for_group(
+        result = await scheduler.perform_auto_analysis_for_group(
             "123456", "onebot-main"
         )
 
@@ -246,6 +246,9 @@ def test_incremental_final_report_requires_successful_delivery():
         }
         scheduler.report_dispatcher.dispatch.side_effect = None
         scheduler.report_dispatcher.dispatch.return_value = True
+        scoped_store = SimpleNamespace(cleanup_old_batches=AsyncMock(return_value=0))
+        root_store = SimpleNamespace(for_session=AsyncMock(return_value=scoped_store))
+        scheduler.analysis_service.incremental_store = root_store
         result = await scheduler._perform_incremental_final_report_for_group(
             "123456", "onebot-main"
         )
@@ -253,6 +256,9 @@ def test_incremental_final_report_requires_successful_delivery():
         assert result["analysis_success"] is True
         assert result["report_sent"] is True
         assert result["success"] is True
+        root_store.for_session.assert_awaited_once_with("123456", "onebot-main")
+        scoped_store.cleanup_old_batches.assert_awaited_once()
+        assert scoped_store.cleanup_old_batches.call_args.args[0] == "123456"
         assert mock_comic_handler.try_trigger_comic_generation.call_count == 2
         mock_comic_handler.try_trigger_comic_generation.assert_called_with(
             "123456", "onebot-main", {}

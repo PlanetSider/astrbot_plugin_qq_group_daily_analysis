@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ..value_objects.analysis_results import ComicCharacterConfig
+    from ..value_objects.group_session import GroupSession
 
 
 @runtime_checkable
@@ -20,7 +24,7 @@ class IConfigProvider(Protocol):
         """检查是否过滤机器人消息"""
         ...
 
-    def get_bot_self_ids(self) -> list:
+    def get_bot_self_ids(self) -> list[str]:
         """获取机器人自身的账号ID列表"""
         ...
 
@@ -88,19 +92,27 @@ class IConfigProvider(Protocol):
         """是否启用每日群漫画"""
         ...
 
-    def get_selected_comic_character(self) -> dict | None:
+    def get_selected_comic_character(self) -> ComicCharacterConfig | None:
         """获取当前选中的漫画角色配置"""
         ...
 
-    def get_comic_character_persona_id(self, character: dict | None) -> str:
+    def get_comic_character_persona_id(
+        self, character: ComicCharacterConfig | None
+    ) -> str:
         """获取漫画角色绑定的人格ID"""
         ...
 
-    def get_comic_character_storyboard_prompt(self, character: dict | None) -> str:
-        """获取漫画角色专属分镜提示词"""
+    def get_comic_character_storyboard_prompt(
+        self,
+        character: ComicCharacterConfig | None,
+        session: GroupSession | None = None,
+    ) -> str:
+        """获取本次漫画的分镜提示词。"""
         ...
 
-    def get_drawing_reference_images(self) -> list[str]:
+    def get_drawing_reference_images(
+        self, character: ComicCharacterConfig | None = None, *, select: bool = True
+    ) -> list[str]:
         """获取当前漫画角色的所有参考图路径列表"""
         ...
 
@@ -112,7 +124,7 @@ class IConfigProvider(Protocol):
         """是否启用外部生图失败回退机制"""
         ...
 
-    def get_drawing_provider_configs(self) -> list[dict]:
+    def get_drawing_provider_configs(self) -> list[dict[str, object]]:
         """获取已启用的漫画生图供应商配置列表"""
         ...
 

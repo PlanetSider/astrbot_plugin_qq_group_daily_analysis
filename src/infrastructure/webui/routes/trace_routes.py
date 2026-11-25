@@ -6,13 +6,15 @@ WebUI 链路观测与指标路由 (Trace & Metrics Routes)
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from ....shared.constants import AnalysisStage
 from ....shared.trace_context import TraceContext
+from ....shared.type_guards import is_object_collection, is_string_mapping
 from ....utils.logger import logger
+from ...analysis.utils.llm_utils import get_llm_runtime_snapshot
 from ...platform.factory import PlatformAdapterFactory
 from ..web_compat import (
     WebApiResponse,
@@ -38,6 +40,7 @@ class ProviderMetadataDTO(TypedDict):
     name: str
     type: str
     label: str
+    provider: NotRequired[str]
 
 
 class PersonaMetadataDTO(TypedDict):
@@ -99,6 +102,27 @@ class TraceRoutes:
             end_time_raw = (request.query.get("end_time") or "").strip()
             sort_by = (request.query.get("sort_by") or "").strip() or "started_at"
             sort_order = (request.query.get("sort_order") or "").strip() or "desc"
+            before_raw = request.query.get("before_time")
+            before_id = (request.query.get("before_id") or "").strip() or None
+            before_time = None
+            if before_raw is not None or before_id is not None:
+                try:
+                    before_time = float(before_raw) if before_raw is not None else None
+                except (ValueError, TypeError):
+                    return error_response("分页游标格式不正确", status_code=400)
+                if (
+                    before_time is None
+                    or not math.isfinite(before_time)
+                    or not before_id
+                    or sort_by != "started_at"
+                    or sort_order != "desc"
+                    or offset != 0
+                ):
+                    return error_response(
+                        "分页游标仅支持时间倒序，不能同时指定偏移", status_code=400
+                    )
+            limit = max(1, min(200, limit))
+            offset = max(0, offset)
 
             start_time = None
             if start_time_raw:
@@ -129,7 +153,7 @@ class TraceRoutes:
 
             items, total = await asyncio.to_thread(
                 self.trace_store.list_traces,
-                limit=query_dto.get("limit", 20),
+                limit=limit + 1,
                 offset=query_dto.get("offset", 0),
                 group_id=query_dto.get("group_id"),
                 status=query_dto.get("status"),
@@ -139,13 +163,59 @@ class TraceRoutes:
                 end_time=query_dto.get("end_time"),
                 sort_by=query_dto.get("sort_by", "started_at"),
                 sort_order=query_dto.get("sort_order", "desc"),
+                before_time=before_time,
+                before_id=before_id,
+                platform=request.query.get("platform"),
             )
             return json_response(
-                {"status": "ok", "data": {"items": items, "total": total}}
+                {
+                    "status": "ok",
+                    "data": {
+                        "items": items[:limit],
+                        "total": total,
+                        "has_more": len(items) > limit,
+                    },
+                }
             )
         except Exception as e:
             logger.error(f"查询 Trace 列表异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
+
+    async def api_acknowledge_trace(self, trace_id: str) -> WebApiResponse:
+        """保存任务提醒的人工知晓状态。
+
+        Args:
+            trace_id: 需要标记或恢复提醒的任务编号。
+
+        Returns:
+            知晓时间回执；输入无效、记录不存在或任务未结束时返回相应错误。
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            return error_response("请求内容不是有效的 JSON。", status_code=400)
+        if not is_string_mapping(body):
+            return error_response("请明确指定是否已知晓。", status_code=400)
+        acknowledged = body.get("acknowledged")
+        if not isinstance(acknowledged, bool):
+            return error_response("请明确指定是否已知晓。", status_code=400)
+        try:
+            stamp = await asyncio.to_thread(
+                self.trace_store.set_trace_acknowledgement, trace_id, acknowledged
+            )
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {"trace_id": trace_id, "acknowledged_at": stamp},
+                }
+            )
+        except KeyError:
+            return error_response("找不到这条分析记录，可能已经清理。", status_code=404)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=409)
+        except Exception as exc:
+            logger.error(f"保存任务知晓标记失败: {exc}", exc_info=True)
+            return error_response("知晓状态未能保存，请稍后重试。", status_code=500)
 
     async def api_get_distinct_groups(self) -> WebApiResponse:
         """获取所有有历史分析记录的群组列表（用于下拉快速筛选）"""
@@ -163,7 +233,7 @@ class TraceRoutes:
         """获取当前 AstrBot 中已注册并就绪的所有聊天平台列表（基于 AstrBot 原生 PlatformMetadata）"""
         try:
             platforms: list[PlatformMetadataDTO] = []
-            seen_ids = set()
+            seen_ids: set[str] = set()
             type_display_map = {
                 "aiocqhttp": "OneBot v11",
                 "qq_official": "QQ 官方机器人",
@@ -269,7 +339,7 @@ class TraceRoutes:
         """获取当前 AstrBot 中已就绪的所有 LLM Provider 列表"""
         try:
             providers: list[ProviderMetadataDTO] = []
-            seen_ids = set()
+            seen_ids: set[str] = set()
             provider_getter = getattr(self.context, "get_all_providers", None)
             if not callable(provider_getter):
                 provider_mgr: ProviderManager | None = getattr(
@@ -284,7 +354,7 @@ class TraceRoutes:
             if callable(provider_getter):
                 raw_list = provider_getter()
                 provider_list: list[object] = (
-                    list(raw_list) if isinstance(raw_list, Iterable) else []
+                    list(raw_list) if is_object_collection(raw_list) else []
                 )
                 for p in provider_list:
                     try:
@@ -309,16 +379,21 @@ class TraceRoutes:
                         )
                         p_type = getattr(meta, "provider_type", "")
                         seen_ids.add(p_id)
-                        providers.append(
-                            {
-                                "id": str(p_id),
-                                "name": str(p_name),
-                                "type": str(p_type),
-                                "label": f"{p_name} ({p_id})"
-                                if p_name != p_id
-                                else str(p_name),
-                            }
-                        )
+                        item: ProviderMetadataDTO = {
+                            "id": str(p_id),
+                            "name": str(p_name),
+                            "type": str(p_type),
+                            "label": f"{p_name} ({p_id})"
+                            if p_name != p_id
+                            else str(p_name),
+                        }
+                        # 宿主已合并模型与服务商来源，只读取用于展示的品牌字段。
+                        raw_config: object = getattr(p, "provider_config", None)
+                        if is_string_mapping(raw_config):
+                            provider = raw_config.get("provider")
+                            if isinstance(provider, str) and provider.strip():
+                                item["provider"] = provider.strip()
+                        providers.append(item)
                     except Exception:
                         pass
             return json_response({"status": "ok", "data": providers})
@@ -330,16 +405,16 @@ class TraceRoutes:
         """获取当前 AstrBot 中配置的所有人格 (Persona) 列表"""
         try:
             personas: list[PersonaMetadataDTO] = []
-            seen_ids = set()
+            seen_ids: set[str] = set()
             pm: PersonaManager | None = getattr(self.context, "persona_manager", None)
             if pm:
                 for p in getattr(pm, "personas_v3", []) or []:
                     p_name = (
                         p.get("name")
-                        if isinstance(p, dict)
+                        if is_string_mapping(p)
                         else getattr(p, "name", None)
                     )
-                    if p_name and p_name not in seen_ids:
+                    if isinstance(p_name, str) and p_name and p_name not in seen_ids:
                         seen_ids.add(p_name)
                         personas.append(
                             {
@@ -407,11 +482,9 @@ class TraceRoutes:
                         else AnalysisStage.FETCH_MESSAGES.value
                     )
                 )
-                spans = list(active_trace._spans) if active_trace else []
-                context_metrics = (
-                    active_trace._context_metrics if active_trace else None
-                )
-                token_usage = active_trace._token_usage if active_trace else None
+                spans = list(active_trace.spans) if active_trace else []
+                context_metrics = active_trace.context_metrics if active_trace else None
+                token_usage = active_trace.token_usage if active_trace else None
 
                 group_id_val = (active_trace.group_id if active_trace else "") or (
                     str(task_info.get("group_id", "")) if task_info else ""
@@ -466,6 +539,7 @@ class TraceRoutes:
         """获取顶部 KPI 与 Token 统计概览"""
         try:
             summary = await asyncio.to_thread(self.trace_store.get_metrics_summary)
+            summary["llm_runtime"] = get_llm_runtime_snapshot()
             return json_response({"status": "ok", "data": summary})
         except Exception as e:
             logger.error(f"获取指标概览异常: {e}", exc_info=True)

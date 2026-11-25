@@ -1,5 +1,8 @@
 import { ApiResponse, AstrBotContext, SSEEventWrapper } from "./bridge";
-import { mockHandlers, mockSSEService } from "../../mocks";
+import { mockHandlers, mockSSEService } from "@/mocks";
+import { mockFontDownloads } from "@/mocks/data/fontDownloads";
+import { getDevThemeContext } from "./devThemeContext";
+export { devSubscribeContext } from "./devThemeContext";
 
 const PLUGIN_BASE_PATH = "/api/plugins/astrbot_plugin_qq_group_daily_analysis_planetsider";
 
@@ -13,7 +16,8 @@ export function getDevBridgeMode(): DevBridgeMode {
       return urlParam;
     }
     if (window.localStorage && typeof window.localStorage.getItem === "function") {
-      return (window.localStorage.getItem("astrbot_dev_bridge_mode") as DevBridgeMode) || "mock";
+      const saved = window.localStorage.getItem("astrbot_dev_bridge_mode");
+      if (saved === "mock" || saved === "proxy") return saved;
     }
   } catch {
     // ignore
@@ -30,6 +34,10 @@ export function setDevBridgeMode(mode: DevBridgeMode) {
     } catch {
       // ignore
     }
+    // 显式 URL 参数优先于缓存；只更新缓存再刷新会一直停在旧模式。
+    const url = new URL(window.location.href);
+    url.searchParams.set("devMode", mode);
+    window.history.replaceState(null, "", url);
     window.location.reload();
   }
 }
@@ -37,7 +45,12 @@ export function setDevBridgeMode(mode: DevBridgeMode) {
 /**
  * 将路由与参数解析分发至 Mock Handlers
  */
-function matchMockHandler(method: string, path: string, params?: Record<string, unknown>, body?: unknown) {
+function matchMockHandler(
+  method: string,
+  path: string,
+  params?: Record<string, unknown>,
+  body?: unknown,
+) {
   const cleanPath = path.replace(/^\/+/, "");
   const targetKey = `${method.toUpperCase()} ${cleanPath}`;
 
@@ -80,20 +93,23 @@ function matchMockHandler(method: string, path: string, params?: Record<string, 
 
 export async function devFetchContext(): Promise<AstrBotContext> {
   return {
-    isDark: false,
+    // 独立页面沿用 URL 或缓存主题，不模拟一条强制亮色的宿主通知。
     pluginName: "astrbot_plugin_qq_group_daily_analysis_planetsider",
     version: "v5.6.4",
+    ...getDevThemeContext(),
   };
 }
 
 export async function devApiGet<T = unknown>(
   path: string,
-  params?: Record<string, unknown>
+  params?: Record<string, unknown>,
 ): Promise<ApiResponse<T> | null> {
   const mode = getDevBridgeMode();
   if (mode === "proxy") {
     try {
-      const search = params ? `?${new URLSearchParams(params as Record<string, string>).toString()}` : "";
+      const search = params
+        ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
+        : "";
       const res = await fetch(`${PLUGIN_BASE_PATH}/${path.replace(/^\/+/, "")}${search}`);
       return (await res.json()) as ApiResponse<T>;
     } catch (err) {
@@ -102,15 +118,20 @@ export async function devApiGet<T = unknown>(
     }
   }
 
-  // 模拟异步网络延迟 (30ms ~ 100ms)
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // 开发时通过 mockDelay 检查慢加载，默认 50ms，限制在 0–5000ms；Proxy 不受影响。
+  const rawDelay = new URLSearchParams(window.location.search).get("mockDelay");
+  const delay =
+    rawDelay !== null && Number.isFinite(Number(rawDelay))
+      ? Math.min(5000, Math.max(0, Number(rawDelay)))
+      : 50;
+  await new Promise((resolve) => setTimeout(resolve, delay));
   const res = matchMockHandler("GET", path, params);
   return res as ApiResponse<T>;
 }
 
 export async function devApiPost<T = unknown>(
   path: string,
-  body?: unknown
+  body?: unknown,
 ): Promise<ApiResponse<T> | null> {
   const mode = getDevBridgeMode();
   if (mode === "proxy") {
@@ -129,8 +150,46 @@ export async function devApiPost<T = unknown>(
 
   // 模拟异步网络延迟
   await new Promise((resolve) => setTimeout(resolve, 50));
+  // 下载保留可操作的等待窗口，让演示模式也能检查取消及部分完成状态。
+  if (["config/typst-fonts/download", "config/template-resources/download"].includes(path)) {
+    const download =
+      typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const id = typeof download.download_id === "string" ? download.download_id : "";
+    if (path === "config/typst-fonts/download" && id)
+      mockFontDownloads.set(id, {
+        name: String(download.name),
+        source: String(download.source || "cdn"),
+        started: Date.now(),
+      });
+    try {
+      await new Promise((resolve) =>
+        setTimeout(resolve, path === "config/typst-fonts/download" ? 1600 : 800),
+      );
+      return matchMockHandler("POST", path, undefined, body) as ApiResponse<T>;
+    } finally {
+      if (id) mockFontDownloads.delete(id);
+    }
+  }
   const res = matchMockHandler("POST", path, undefined, body);
   return res as ApiResponse<T>;
+}
+
+/** 开发环境保持二进制分块传输，与宿主上传的请求形态一致。 */
+export async function devApiUpload(path: string, file: File): Promise<unknown> {
+  if (getDevBridgeMode() === "proxy") {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(`${PLUGIN_BASE_PATH}/${path}`, { method: "POST", body });
+    return await response.json();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const matched = /^plugin-data\/files\/upload\/([^/]+)\/(\d+)$/.exec(path);
+  if (!matched) throw new Error("未知上传路径");
+  return matchMockHandler("POST", "plugin-data/files/upload", undefined, {
+    download_id: matched[1],
+    offset: Number(matched[2]),
+    chunk_bytes: file.size,
+  });
 }
 
 export function devSubscribeSSE(handlers: {

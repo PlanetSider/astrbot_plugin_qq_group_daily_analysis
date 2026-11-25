@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ....utils.logger import logger
+from ..character_reference import format_character_prompt
 
 if TYPE_CHECKING:
     from .context import DrawingRequestContext
@@ -22,7 +23,7 @@ async def call_images_api(
     context: DrawingRequestContext,
     prompt: str,
     images_data: list[tuple[bytes, str]] | None = None,
-    provider: dict | None = None,
+    provider: dict[str, object] | None = None,
 ) -> bytes | None:
     """调用 OpenAI Images 兼容接口。
 
@@ -56,7 +57,6 @@ async def call_images_api(
     output_format = str(context.get_provider_value("output_format", provider) or "")
 
     payload: dict[str, object] = {
-        "prompt": prompt,
         "model": model,
         "n": 1,
         "size": resolved_size,
@@ -92,7 +92,10 @@ async def call_images_api(
     if response_format:
         payload["response_format"] = response_format
     try:
-        output_compression = int(provider.get("output_compression", 0))
+        raw_number = provider.get("output_compression", 0)
+        if not isinstance(raw_number, (str, int, float)):
+            raise TypeError("配置值必须是数字")
+        output_compression = int(raw_number)
     except (TypeError, ValueError):
         output_compression = 0
     if is_gpt_image and output_compression > 0 and output_format in {"jpeg", "webp"}:
@@ -114,7 +117,10 @@ async def call_images_api(
     # 设置为 0 会自然退回到文生图；无效输入则使用模板默认值 6。
     if images_data:
         try:
-            max_references = max(0, int(provider.get("max_reference_images", 6)))
+            raw_number = provider.get("max_reference_images", 6)
+            if not isinstance(raw_number, (str, int, float)):
+                raise TypeError("配置值必须是数字")
+            max_references = max(0, int(raw_number))
         except (TypeError, ValueError):
             max_references = 6
         if len(images_data) > max_references:
@@ -125,7 +131,8 @@ async def call_images_api(
             )
         images_data = images_data[:max_references]
 
-    if images_data and len(images_data) > 0:
+    prompt = format_character_prompt(prompt, len(images_data or []))
+    if images_data:
         if target_url.endswith("/generations"):
             target_url = target_url.replace("/generations", "/edits")
 
@@ -155,7 +162,7 @@ async def call_images_api(
         if is_gpt_image and moderation:
             multipart_data["moderation"] = moderation
 
-        files = []
+        files: list[tuple[str, tuple[str, bytes, str]]] = []
         for index, (img_bytes, mime) in enumerate(images_data, start=1):
             ext = mime.split("/")[-1] if "/" in mime else "png"
             files.append(("image[]", (f"image_{index}.{ext}", img_bytes, mime)))
@@ -173,6 +180,7 @@ async def call_images_api(
                 target_url, headers=headers, data=multipart_data, files=files
             )
     else:
+        payload["prompt"] = prompt
         logger.info(
             f"[Comic] 发起 Images API 请求 -> {context.sanitize_url(target_url)} (model={model}, size={resolved_size}, aspect_ratio={ar})..."
         )

@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import datetime
+import json
+import uuid
 from typing import TYPE_CHECKING, cast
 
 from ...domain.value_objects import (
@@ -16,10 +18,15 @@ from ...domain.value_objects import (
     UserTitle,
 )
 from ...shared.trace_context import TraceContext
+from ...shared.type_guards import is_object_list, is_string_mapping
 from ...utils.logger import logger
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from astrbot.api.star import Star
+
+    from .kv_contracts import KeyValueWriter
 
 
 class HistoryManager:
@@ -40,12 +47,42 @@ class HistoryManager:
         """
         self.plugin = star_instance
 
+    @staticmethod
+    def latest_key(
+        group_id: str, date_str: str, platform_id: str, time_str: str | None = None
+    ) -> str:
+        """构建会话最新记录指针，供存取与管理操作共同使用。
+
+        Args:
+            group_id: 群标识。
+            date_str: 分析日期。
+            platform_id: 真实实例 ID，空值表示旧共享记录。
+            time_str: 可选的分钟定位。
+
+        Returns:
+            不同会话不会碰撞的指针键。
+        """
+        if not platform_id:
+            return f"analysis_{group_id}_{date_str}" + (
+                f"_{time_str.replace(':', '-')}" if time_str else ""
+            )
+        identity = (
+            json.dumps(
+                [platform_id, group_id, date_str, time_str or ""], ensure_ascii=False
+            )
+            .encode()
+            .hex()
+        )
+        return f"analysis_session_{identity}"
+
     async def save_analysis(
         self,
         group_id: str,
-        analysis_result: dict[str, object],
+        analysis_result: Mapping[str, object],
         date_str: str | None = None,
         time_str: str | None = None,
+        *,
+        platform_id: str = "",
     ) -> bool:
         """
         序列化并存储分析快照及可独立查询的摘要。
@@ -57,6 +94,7 @@ class HistoryManager:
             analysis_result (dict[str, object]): 包含 statistics, topics, user_titles 的完整分析对象
             date_str (str, optional): 归档日期 (YYYY-MM-DD)，缺省为当天
             time_str (str, optional): 归档时间点 (HH-MM)，缺省为当前时刻
+            platform_id: 真实平台实例 ID；空值仅用于旧共享记录。
 
         Returns:
             bool: 存储是否成功
@@ -74,13 +112,13 @@ class HistoryManager:
             # 从分析结果中剥离非持久化字段，提取核心统计元数据
             stats = analysis_result.get("statistics")
             topics_raw = analysis_result.get("topics")
-            topics = topics_raw if isinstance(topics_raw, list) else []
+            topics = topics_raw if is_object_list(topics_raw) else []
             user_titles_raw = analysis_result.get("user_titles")
-            user_titles = user_titles_raw if isinstance(user_titles_raw, list) else []
+            user_titles = user_titles_raw if is_object_list(user_titles_raw) else []
 
-            topics_summary = []
+            topics_summary: list[dict[str, str]] = []
             for t in topics:
-                if isinstance(t, dict):
+                if is_string_mapping(t):
                     topics_summary.append(
                         {
                             "topic": str(t.get("topic", "")),
@@ -110,6 +148,8 @@ class HistoryManager:
             quality = analysis_result.get("chat_quality_review")
             key = f"analysis_{group_id}_{date_str}_{time_str}"
             trace = TraceContext.current()
+            if platform_id:
+                key += f"_{uuid.uuid4().hex}"
             snapshot = {
                 "trace_id": trace.trace_id if trace else "",
                 "statistics": stats.to_dict()
@@ -128,12 +168,32 @@ class HistoryManager:
                 if isinstance(quality, QualityReview)
                 else quality,
                 "generated_at": summary["generated_at"],
+                "platform_id": platform_id,
+                "group_id": group_id,
             }
-            await self.plugin.put_kv_data(
-                key, {"summary": summary, "analysis": snapshot}
+            await cast("KeyValueWriter", self.plugin).put_kv_data(
+                key,
+                {
+                    "summary": summary,
+                    "analysis": snapshot,
+                    "platform_id": platform_id,
+                    "group_id": group_id,
+                    "date_str": date_str,
+                    "created_at": now.isoformat(),
+                },
             )
+            if platform_id:
+                if trace and trace.trace_id:
+                    await cast("KeyValueWriter", self.plugin).put_kv_data(
+                        f"analysis_task_{trace.trace_id.encode().hex()}", key
+                    )
+                await cast("KeyValueWriter", self.plugin).put_kv_data(
+                    self.latest_key(group_id, date_str, platform_id, time_str), key
+                )
             # 时间点保留独立版本，日期键只指向最近一次成功保存的记录。
-            await self.plugin.put_kv_data(f"analysis_{group_id}_{date_str}", key)
+            await cast("KeyValueWriter", self.plugin).put_kv_data(
+                self.latest_key(group_id, date_str, platform_id), key
+            )
 
             logger.info(
                 f"已保存群 {group_id} 在 {date_str} {time_str} 的分析摘要到历史记录 (Key: {key})"
@@ -144,7 +204,13 @@ class HistoryManager:
             return False
 
     async def get_analysis(
-        self, group_id: str, date_str: str, time_str: str | None = None
+        self,
+        group_id: str,
+        date_str: str,
+        time_str: str | None = None,
+        *,
+        platform_id: str = "",
+        trace_id: str | None = None,
     ) -> dict[str, object] | None:
         """根据群组和日期获取分析数据。
 
@@ -152,22 +218,35 @@ class HistoryManager:
             group_id: 群组 ID。
             date_str: 归档日期。
             time_str: 可选归档时间；省略时读取每日最新记录。
+            platform_id: 真实平台实例 ID；指定后不读取归属不明的旧记录。
+            trace_id: 精确任务身份；指定后不回退到其他任务。
 
         Returns:
             完整分析快照；旧版本仅保存摘要的记录仍原样返回。
         """
-        key = f"analysis_{group_id}_{date_str}"
-        if time_str:
-            key += f"_{time_str.replace(':', '-')}"
+        key = (
+            f"analysis_task_{trace_id.encode().hex()}"
+            if trace_id
+            else self.latest_key(group_id, date_str, platform_id, time_str)
+        )
         record = cast("object", await self.plugin.get_kv_data(key, None))
         if isinstance(record, str) and record.startswith(
             f"analysis_{group_id}_{date_str}_"
         ):
             record = cast("object", await self.plugin.get_kv_data(record, None))
-        if not isinstance(record, dict):
+        if not is_string_mapping(record):
             return None
         analysis = record.get("analysis")
-        return analysis if isinstance(analysis, dict) else record
+        if platform_id and record.get("platform_id") != platform_id:
+            return None
+        if trace_id and (
+            record.get("group_id") != group_id
+            or record.get("date_str") != date_str
+            or not is_string_mapping(analysis)
+            or analysis.get("trace_id") != trace_id
+        ):
+            return None
+        return analysis if is_string_mapping(analysis) else record
 
     async def get_history(
         self, group_id: str, date_str: str, time_str: str
@@ -178,10 +257,10 @@ class HistoryManager:
         time_str = time_str.replace(":", "-")
         key = f"analysis_{group_id}_{date_str}_{time_str}"
         record = cast("object", await self.plugin.get_kv_data(key, None))
-        if not isinstance(record, dict):
+        if not is_string_mapping(record):
             return None
         summary = record.get("summary")
-        return summary if isinstance(summary, dict) else record
+        return summary if is_string_mapping(summary) else record
 
     async def has_history(self, group_id: str, date_str: str, time_str: str) -> bool:
         """

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from src.application.handlers.comic_command_handler import ComicCommandHandler
+from src.domain.value_objects.group_session import GroupSession
 from src.domain.value_objects.report_delivery import (
     FeishuPrivateTarget,
     QQOfficialPrivateTarget,
@@ -49,21 +50,28 @@ def comic_rig(tmp_path):
             "group_album_strict_mode": False,
         },
     }
+    album_support = {
+        "find_album_id": AsyncMock(return_value=None),
+        "get_group_album_list": AsyncMock(return_value=[]),
+    }
     source = SimpleNamespace(
         platform_id=SOURCE_PLATFORM,
         send_image=AsyncMock(return_value=True),
         upload_group_album=AsyncMock(return_value=True),
         get_group_info=AsyncMock(return_value=None),
+        **album_support,
     )
     target = SimpleNamespace(
         platform_id=TARGET_PLATFORM,
         send_image=AsyncMock(return_value=True),
         upload_group_album=AsyncMock(return_value=True),
+        **album_support,
     )
     adapters = {SOURCE_PLATFORM: source, TARGET_PLATFORM: target}
     bot_manager = SimpleNamespace(
         get_adapter=Mock(side_effect=adapters.get),
         get_adapter_platform_id=Mock(side_effect=lambda adapter: adapter.platform_id),
+        resolve_platform_id=Mock(return_value=SOURCE_PLATFORM),
         update_from_event=Mock(),
     )
     comic_service = SimpleNamespace(
@@ -97,7 +105,7 @@ def comic_rig(tmp_path):
 
 
 async def generate(rig):
-    await rig.handler._trigger_comic_generation(
+    await rig.handler.trigger_comic_generation(
         TOPICS, SOURCE_GROUP, SOURCE_PLATFORM, SOURCE_UMO
     )
 
@@ -136,7 +144,10 @@ async def test_forward_comic_and_album_use_only_the_configured_target(
     await generate(rig)
 
     rig.comic_service.generate_comic.assert_awaited_once_with(
-        TOPICS, SOURCE_GROUP, SOURCE_UMO
+        TOPICS,
+        SOURCE_GROUP,
+        SOURCE_UMO,
+        GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
     )
     adapter.send_image.assert_awaited_once()
     sent_group, image = adapter.send_image.await_args.args
@@ -222,7 +233,7 @@ async def test_invalid_or_serverchan_destination_never_creates_comic_task(
     )
 
     assert rig.handler._background_tasks == set()
-    assert rig.handler._comic_group_tasks == {}
+    assert rig.handler.comic_group_tasks == {}
     rig.comic_service.generate_comic.assert_not_awaited()
     rig.source.send_image.assert_not_awaited()
     rig.target.send_image.assert_not_awaited()
@@ -315,7 +326,7 @@ async def test_queued_comic_rechecks_destination_before_generation(comic_rig, se
     rig.comic_service.generate_comic.assert_not_awaited()
     rig.target.send_image.assert_not_awaited()
     rig.source.send_image.assert_not_awaited()
-    assert not rig.handler._comic_group_tasks
+    assert not rig.handler.comic_group_tasks
 
 
 @pytest.mark.parametrize("output", ["bytes", "url"])
@@ -339,7 +350,10 @@ async def test_destination_changed_during_drawing_is_rechecked(
     await generate(rig)
 
     rig.comic_service.generate_comic.assert_awaited_once_with(
-        TOPICS, SOURCE_GROUP, SOURCE_UMO
+        TOPICS,
+        SOURCE_GROUP,
+        SOURCE_UMO,
+        GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
     )
     if change == "new_group":
         assert rig.target.send_image.await_args.args[0] == "777777"
@@ -489,7 +503,7 @@ async def test_comic_deduplication_remains_keyed_by_source_group(comic_rig):
         )
         == "started"
     )
-    assert set(rig.handler._comic_group_tasks) == {f"{SOURCE_PLATFORM}:{SOURCE_GROUP}"}
+    assert set(rig.handler.comic_group_tasks) == {f"{SOURCE_PLATFORM}:{SOURCE_GROUP}"}
     assert (
         rig.handler.try_trigger_comic_generation(
             SOURCE_GROUP, SOURCE_PLATFORM, {"topics": TOPICS}
@@ -501,7 +515,7 @@ async def test_comic_deduplication_remains_keyed_by_source_group(comic_rig):
     rig.comic_service.generate_comic.assert_awaited_once()
     rig.target.send_image.assert_awaited_once()
     rig.source.send_image.assert_not_awaited()
-    assert not rig.handler._comic_group_tasks
+    assert not rig.handler.comic_group_tasks
 
 
 @pytest.mark.parametrize("forward", [False, True])
@@ -543,7 +557,10 @@ async def test_comic_independent_switches_keep_the_correct_group_destination(
     other_adapter.send_image.assert_not_awaited()
     other_adapter.upload_group_album.assert_not_awaited()
     rig.comic_service.generate_comic.assert_awaited_once_with(
-        TOPICS, SOURCE_GROUP, SOURCE_UMO
+        TOPICS,
+        SOURCE_GROUP,
+        SOURCE_UMO,
+        GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
     )
 
 
@@ -669,7 +686,10 @@ async def test_comic_three_channels_and_stop_source_use_one_destination(
         assert status == "started"
         await asyncio.gather(*tuple(rig.handler._background_tasks))
         rig.comic_service.generate_comic.assert_awaited_once_with(
-            TOPICS, SOURCE_GROUP, SOURCE_UMO
+            TOPICS,
+            SOURCE_GROUP,
+            SOURCE_UMO,
+            GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
         )
     for adapter, group in destinations:
         if adapter is winner:
@@ -823,7 +843,10 @@ async def test_private_comic_keeps_source_archive_and_skips_all_group_uploads(
     )
     await asyncio.gather(*tuple(rig.handler._background_tasks))
     rig.comic_service.generate_comic.assert_awaited_once_with(
-        TOPICS, SOURCE_GROUP, SOURCE_UMO
+        TOPICS,
+        SOURCE_GROUP,
+        SOURCE_UMO,
+        GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
     )
     rig.official.send_private_image.assert_awaited_once()
     sent_target, image = rig.official.send_private_image.await_args.args
@@ -1058,7 +1081,10 @@ async def test_feishu_only_mode_sends_comic_to_bot_private_chat(
     )
     await asyncio.gather(*tuple(rig.handler._background_tasks))
     rig.comic_service.generate_comic.assert_awaited_once_with(
-        TOPICS, SOURCE_GROUP, SOURCE_UMO
+        TOPICS,
+        SOURCE_GROUP,
+        SOURCE_UMO,
+        GroupSession(SOURCE_PLATFORM, SOURCE_GROUP),
     )
     rig.handler.feishu_sender.send_comic.assert_awaited_once()
     bot_config, image, caption = rig.handler.feishu_sender.send_comic.await_args.args

@@ -431,7 +431,7 @@ def test_scheduler_keeps_analysis_success_when_delivery_is_disabled(
     execute = (
         scheduler._perform_incremental_final_report_for_group
         if incremental
-        else scheduler._perform_auto_analysis_for_group
+        else scheduler.perform_auto_analysis_for_group
     )
 
     async def run():

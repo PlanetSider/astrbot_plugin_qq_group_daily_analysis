@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from ...shared.type_guards import is_string_mapping
 from ...utils.logger import logger
 
 if TYPE_CHECKING:
@@ -48,8 +49,10 @@ class ServerChanBotSender:
                         f"[Server酱机器人] 推送失败，HTTP 状态码：{response.status}"
                     )
                     return False
-                body: object = await response.json()
-                if not isinstance(body, dict) or body.get("ok") is not True:
+                payload: object = await response.json()
+
+                body = payload if is_string_mapping(payload) else None
+                if body is None or body.get("ok") is not True:
                     logger.error(
                         "[Server酱机器人] 接口未确认推送成功，请检查令牌和 UID"
                     )

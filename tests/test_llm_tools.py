@@ -24,6 +24,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.domain.value_objects.group_session import GroupSession
+from src.shared.trace_context import TraceContext
+
 import pytest
 
 from src.application.services.analysis_trigger_service import AnalysisTriggerService
@@ -40,7 +43,7 @@ def mock_config_manager():
     cfg.get_user_title_analysis_enabled.return_value = True
     cfg.get_golden_quote_analysis_enabled.return_value = True
     cfg.get_chat_quality_analysis_enabled.return_value = False  # 默认关闭质量分析测试配置交集
-    cfg._get_group.return_value = {"admin_users": ["99999"]}
+    cfg.get_group.return_value = {"admin_users": ["99999"]}
     return cfg
 
 
@@ -241,10 +244,26 @@ async def test_query_reports_sliding_probe(report_query_service, mock_checkpoint
 # ==================== 4. AnalysisTriggerService 触发测试 ====================
 
 
+@pytest.mark.asyncio
+async def test_trigger_pending_session_is_independent_and_init_failure_releases_it(trigger_service, mock_analysis_service, monkeypatch):
+    event = MagicMock()
+    event.is_admin.return_value = True
+    event.get_group_id.return_value = "123456"
+    mock_analysis_service.bot_manager.resolve_platform_id.return_value = "second"
+    trigger_service._pending_groups[GroupSession("first", "123456")] = "other-task"
+    monkeypatch.setattr(TraceContext, "set_async", AsyncMock(side_effect=OSError("模拟追踪初始化失败")))
+    result = await trigger_service.trigger_analysis(event)
+    assert "后台启动" in result
+    tasks = list(trigger_service._background_tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)
+    assert trigger_service._pending_groups == {GroupSession("first", "123456"): "other-task"}
+
+
 @pytest.fixture
 def mock_analysis_service():
     srv = MagicMock()
     srv.is_group_running.return_value = False
+    srv.bot_manager.resolve_platform_id.return_value = "aiocqhttp"
     srv.execute_daily_analysis = AsyncMock(return_value={"success": True})
     return srv
 
@@ -252,6 +271,7 @@ def mock_analysis_service():
 @pytest.fixture
 def mock_active_task_manager():
     mgr = MagicMock()
+    mgr.is_analysis_running.return_value = False
     mgr.register_task = AsyncMock()
     mgr.unregister_task = AsyncMock()
     return mgr
@@ -281,26 +301,6 @@ def trigger_service(
         trace_store=mock_trace_store,
         report_dispatcher=mock_report_dispatcher,
     )
-
-
-async def _wait_async_analysis_done(
-    trigger_service: AnalysisTriggerService, group_id: str = "123456"
-) -> None:
-    """有界轮询等待后台分析协程收尾。
-
-    后台协程先经线程池完成 trace 落库与 finish，才会在 finally 中释放群排他锁；
-    全量测试负载下该过程可能超过固定 sleep 的时长，因此以锁释放作为完成信号，
-    避免时序抖动导致的偶发失败。
-
-    Args:
-        trigger_service: 待观测的分析触发服务实例。
-        group_id: 期望已释放排他锁的目标群号。
-    """
-
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + 5.0
-    while group_id in trigger_service._pending_groups and loop.time() < deadline:
-        await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -357,8 +357,11 @@ async def test_trigger_success_async_fire_and_forget_with_render(
     assert "topics" in msg or "话题" in msg
     assert "跳过模块: 聊天质量分析" in msg
 
-    # 等待后台任务执行
-    await _wait_async_analysis_done(trigger_service)
+    # 等待实际后台任务完成，避免线程调度较慢时固定延时提前结束。
+    # 等待实际后台任务完成，避免线程调度较慢时固定延时提前结束。
+    await asyncio.wait_for(
+        asyncio.gather(*trigger_service._background_tasks), timeout=5
+    )
     mock_analysis_service.execute_daily_analysis.assert_called_once()
     call_kwargs = mock_analysis_service.execute_daily_analysis.call_args.kwargs
     assert call_kwargs["group_id"] == "123456"
@@ -401,7 +404,10 @@ async def test_trigger_silent_mode_no_dispatch(
     assert "[分析任务已成功在后台启动]" in msg
     assert "**不会**向群聊发送长图" in msg
 
-    await _wait_async_analysis_done(trigger_service)
+    # 静默分支执行完后再检查分发器，避免任务尚未启动时误判。
+    await asyncio.wait_for(
+        asyncio.gather(*trigger_service._background_tasks), timeout=5
+    )
     mock_analysis_service.execute_daily_analysis.assert_called_once()
     # 验证静默模式下未调用 report_dispatcher
     mock_report_dispatcher.dispatch.assert_not_called()
@@ -517,7 +523,7 @@ async def test_trigger_preemption_lock(trigger_service):
     event.get_platform_id.return_value = "aiocqhttp"
 
     # 人工占用预占集合
-    trigger_service._pending_groups.add("123456")
+    trigger_service._pending_groups[GroupSession("aiocqhttp", "123456")] = "pending"
     msg = await trigger_service.trigger_analysis(event=event, group="123456")
     assert "[任务冲突]" in msg
     trigger_service._pending_groups.clear()
@@ -682,7 +688,9 @@ async def test_trigger_dispatch_failure_resilience(
     )
     assert "[分析任务已成功在后台启动]" in msg
     # 等待后台任务执行完成
-    await _wait_async_analysis_done(trigger_service)
+    await asyncio.wait_for(
+        asyncio.gather(*trigger_service._background_tasks), timeout=5
+    )
     # 验证群排他锁已正常释放
     assert "123456" not in trigger_service._pending_groups
 
@@ -704,6 +712,7 @@ async def test_main_llm_tool_integration_flow(
     plugin = MagicMock(spec=GroupDailyAnalysis)
     plugin.config_manager = mock_config_manager
     plugin.analysis_service = mock_analysis_service
+    plugin.bot_manager = mock_analysis_service.bot_manager
     plugin.report_query_service = report_query_service
     plugin.analysis_trigger_service = AnalysisTriggerService(
         config_manager=mock_config_manager,
@@ -723,6 +732,7 @@ async def test_main_llm_tool_integration_flow(
     ):
         get_res = await GroupDailyAnalysis.get_daily_report(plugin, event=event, group="123456", report_section="话题")
         assert "### 群聊日常分析报告" in get_res
+        assert report_query_service.query_reports.call_args.kwargs["platform_id"] == "aiocqhttp"
 
     # 2. 调用 trigger_daily_analysis 代理
     trig_res = await GroupDailyAnalysis.trigger_daily_analysis(

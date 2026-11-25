@@ -288,7 +288,7 @@ def make_dispatcher(
     )
     dispatcher = ReportDispatcher(config, generator, message_sender)
     dispatcher.set_html_render(AsyncMock())
-    dispatcher._try_upload_image = AsyncMock()
+    dispatcher.try_upload_image = AsyncMock()
     return dispatcher, source_adapter, target_adapter
 
 
@@ -357,7 +357,7 @@ def test_forward_format_failure_and_text_fallback_only_use_target(
             "来源群：source-group",
             "target-platform",
         )
-        dispatcher._try_upload_image.assert_awaited_once_with(
+        dispatcher.try_upload_image.assert_awaited_once_with(
             "target-group", str(report_path), "target-platform"
         )
         assert next((tmp_path / "reports").glob("report_source-group_*.jpg"), None)

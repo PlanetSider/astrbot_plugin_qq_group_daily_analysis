@@ -10,10 +10,11 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
+from astrbot.api.event import AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter as astrbot_filter
 from astrbot.api.event.filter import PermissionType
 from astrbot.api.star import Context, Star, StarTools
 
@@ -41,6 +42,7 @@ from .src.application.services.template_command_service import (
 from .src.domain.services.analysis_domain_service import AnalysisDomainService
 from .src.domain.services.incremental_merge_service import IncrementalMergeService
 from .src.domain.services.statistics_service import StatisticsService
+from .src.entrypoints.host_api import EventFilters, HostHtmlRenderer, StarInitializer
 from .src.infrastructure.analysis.llm_analyzer import LLMAnalyzer
 from .src.infrastructure.config.config_manager import ConfigManager
 from .src.infrastructure.drawing.drawing_client import DrawingClient
@@ -62,6 +64,9 @@ from .src.infrastructure.platform.template_preview import (
     TelegramTemplatePreviewHandler,
     TemplatePreviewRouter,
 )
+from .src.infrastructure.platform.template_preview.comic_preview_cache import (
+    ComicPreviewCache,
+)
 from .src.infrastructure.platform.template_preview.image_cache import PreviewImageCache
 from .src.infrastructure.reporting.generators import ReportGenerator
 from .src.infrastructure.scheduler.auto_scheduler import AutoScheduler
@@ -70,8 +75,12 @@ from .src.infrastructure.webui.active_task_manager import ActiveTaskManager
 from .src.infrastructure.webui.plugin_page_bridge import PluginPageWebUIBridge
 from .src.shared.constants import PLUGIN_NAME
 from .src.shared.trace_context import TraceContext
+from .src.shared.type_guards import is_string_mapping
 from .src.utils.logger import logger
 from .src.utils.resilience import GlobalRateLimiter
+
+# 仅补齐宿主类型信息，不包装装饰器或替换其运行逻辑。
+filter = cast("EventFilters", astrbot_filter)
 
 if TYPE_CHECKING:
     from .src.domain.repositories import PlatformAdapterProtocol
@@ -122,7 +131,7 @@ class GroupDailyAnalysis(Star):
     _discovery_run: bool
 
     def __init__(self, context: Context, config: AstrBotConfig):
-        super().__init__(context)
+        cast("StarInitializer", super()).__init__(context)
         self.config = config
 
         # 1. 基础设施层
@@ -174,7 +183,7 @@ class GroupDailyAnalysis(Star):
             incremental_store=self.incremental_store,
             incremental_merge_service=self.incremental_merge_service,
             checkpoint_store=self.checkpoint_store,
-            html_render=self.html_render,
+            html_render=cast("HostHtmlRenderer", self).html_render,
         )
         self.drawing_client = DrawingClient(self.config_manager)
         self.comic_service = ComicApplicationService(
@@ -206,10 +215,14 @@ class GroupDailyAnalysis(Star):
         preview_image_cache = PreviewImageCache(
             self.plugin_data_dir / "template_preview_cache"
         )
+        comic_preview_cache = ComicPreviewCache(
+            self.plugin_data_dir / "comic_preview_cache", self.template_command_service
+        )
         self.telegram_template_preview_handler = TelegramTemplatePreviewHandler(
             config_manager=self.config_manager,
             template_service=self.template_command_service,
             image_cache=preview_image_cache,
+            comic_preview_cache=comic_preview_cache,
         )
         self.template_preview_router = TemplatePreviewRouter(
             handlers=[
@@ -217,11 +230,13 @@ class GroupDailyAnalysis(Star):
                     self.config_manager,
                     self.template_command_service,
                     preview_image_cache,
+                    comic_preview_cache=comic_preview_cache,
                 ),
                 self.telegram_template_preview_handler,
             ],
             template_service=self.template_command_service,
             image_cache=preview_image_cache,
+            comic_preview_cache=comic_preview_cache,
         )
 
         # 调度与发送
@@ -231,7 +246,7 @@ class GroupDailyAnalysis(Star):
             self.analysis_service,
             self.bot_manager,
             self.report_generator,
-            self.html_render,
+            cast("HostHtmlRenderer", self).html_render,
             plugin_instance=self,
         )
 
@@ -249,6 +264,7 @@ class GroupDailyAnalysis(Star):
             report_dispatcher=self.auto_scheduler.report_dispatcher,
             report_output_dir=plugin_data_dir / "reports",
             auto_scheduler=self.auto_scheduler,
+            comic_preview_cache=comic_preview_cache,
         )
         self.webui_bridge.register_routes()
 
@@ -279,20 +295,18 @@ class GroupDailyAnalysis(Star):
             analysis_service=self.analysis_service,
             active_task_manager=self.active_task_manager,
             plugin_data_dir=plugin_data_dir,
-            plugin_instance=self,
         )
         self.analysis_command_handler = AnalysisCommandHandler(
             config_manager=self.config_manager,
             bot_manager=self.bot_manager,
             analysis_service=self.analysis_service,
             report_generator=self.report_generator,
-            html_render=self.html_render,
+            html_render=cast("HostHtmlRenderer", self).html_render,
             active_task_manager=self.active_task_manager,
             trace_store=self.trace_store,
             message_sender=self.message_sender,
             comic_handler=self.comic_command_handler,
             plugin_data_dir=plugin_data_dir,
-            plugin_instance=self,
             stop_watcher_factory=FrontendStopWatcher,
             report_dispatcher=self.auto_scheduler.report_dispatcher,
         )
@@ -319,7 +333,7 @@ class GroupDailyAnalysis(Star):
         self._initialized = False
         self._terminating = False
         self._init_lock = asyncio.Lock()
-        self._background_tasks: set[asyncio.Task] = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
         # 异步注册任务，处理插件重载情况
         try:
@@ -527,11 +541,11 @@ class GroupDailyAnalysis(Star):
             return
         msg_obj = event.message_obj
         raw_message = msg_obj.raw_message if msg_obj else None
-        if isinstance(raw_message, dict):
-            author = raw_message.get("author") or {}
+        if is_string_mapping(raw_message):
+            author: object = raw_message.get("author") or {}
             group_openid = str(raw_message.get("group_openid", "") or "").strip()
             member_openid = str(
-                author.get("member_openid", "") if isinstance(author, dict) else ""
+                author.get("member_openid", "") if is_string_mapping(author) else ""
             ).strip()
         else:
             author = getattr(raw_message, "author", None)
@@ -546,12 +560,12 @@ class GroupDailyAnalysis(Star):
             if callable(remember_user_profile):
                 raw_avatar = (
                     author.get("avatar")
-                    if isinstance(author, dict)
+                    if is_string_mapping(author)
                     else getattr(author, "avatar", None)
                 )
                 raw_nickname = (
                     author.get("username")
-                    if isinstance(author, dict)
+                    if is_string_mapping(author)
                     else getattr(author, "username", None)
                 )
                 remember_user_profile(
@@ -654,6 +668,21 @@ class GroupDailyAnalysis(Star):
         ):
             yield result
 
+    @filter.command("查看漫画风格", alias={"view_comic_styles"})
+    @filter.permission_type(PermissionType.ADMIN)
+    async def view_comic_styles(
+        self, event: AstrMessageEvent
+    ) -> AsyncGenerator[MessageEventResult]:
+        """查看漫画风格目录、分页缩略图或单张大图。"""
+        if not self._get_group_id_from_event(event):
+            yield event.plain_result("请在群聊中使用此命令。")
+            return
+        parts = event.get_message_str().strip().split(maxsplit=1)
+        selection = parts[1] if len(parts) == 2 else ""
+        result = await self.template_preview_router.view_comic_styles(event, selection)
+        if result is not None:
+            yield result
+
     @filter.command("分析设置", alias={"analysis_settings"})
     @filter.permission_type(PermissionType.ADMIN)
     async def analysis_settings(
@@ -679,9 +708,9 @@ class GroupDailyAnalysis(Star):
         ):
             yield result
 
-    async def _refresh_incremental_target_states(self) -> None:
+    async def refresh_incremental_target_states(self) -> None:
         """在插件内修改名单后立即同步增量状态。"""
-        await self.settings_command_handler._refresh_incremental_target_states()
+        await self.settings_command_handler.refresh_incremental_target_states()
 
     # ==================== LLM Tool 函数调用注册 ====================
 
@@ -744,8 +773,18 @@ class GroupDailyAnalysis(Star):
                 )
             return f"未能定位到群聊 '{group}'。建议直接提供纯数字群号重新查询。"
 
+        try:
+            platform_id = self.bot_manager.resolve_platform_id(
+                group.rsplit(":GroupMessage:", 1)[0]
+                if ":GroupMessage:" in group
+                else str(event.get_platform_id() or "")
+            )
+        except ValueError as error:
+            return str(error)
+        target_umo = f"{platform_id}:GroupMessage:{target_group_id}"
+
         # 2. 群权限白名单校验
-        if not self.config_manager.is_group_allowed(target_group_id):
+        if not self.config_manager.is_group_allowed(target_umo):
             return f"群聊 {matched_name or target_group_id} 未在群分析启用名单中，暂无分析数据。"
 
         # 3. 日期范围解析
@@ -761,6 +800,7 @@ class GroupDailyAnalysis(Star):
             start_date=start_date,
             end_date=end_date,
             report_section=report_section,
+            platform_id=platform_id,
         )
 
     @filter.llm_tool("group_daily_analysis_trigger")
@@ -811,7 +851,7 @@ class GroupDailyAnalysis(Star):
         ):
             yield res
 
-    async def _try_upload_image(
+    async def try_upload_image(
         self,
         group_id: str,
         image_url: str,
@@ -819,29 +859,29 @@ class GroupDailyAnalysis(Star):
         is_comic: bool = False,
     ) -> None:
         if is_comic:
-            await self.comic_command_handler._try_upload_image(
+            await self.comic_command_handler.try_upload_image(
                 group_id, image_url, platform_id, is_comic=True
             )
         else:
-            await self.analysis_command_handler._try_upload_image(
+            await self.analysis_command_handler.try_upload_image(
                 group_id, image_url, platform_id, is_comic=False
             )
 
-    def _save_report_to_history(
+    def save_report_to_history(
         self, image_url: str, group_id: str, trace_id: str | None = None
     ) -> None:
-        self.analysis_command_handler._save_report_to_history(
+        self.analysis_command_handler.save_report_to_history(
             image_url, group_id, trace_id=trace_id
         )
 
-    async def _send_text_reports(
+    async def send_text_reports(
         self,
         group_id: str,
         analysis_result: AnalysisResultPayload,
         is_qq_official: bool,
         adapter: PlatformAdapterProtocol,
     ) -> None:
-        await self.analysis_command_handler._send_text_reports(
+        await self.analysis_command_handler.send_text_reports(
             group_id, analysis_result, is_qq_official, adapter
         )
 
@@ -862,7 +902,7 @@ class GroupDailyAnalysis(Star):
             trace=trace,
         )
 
-    async def _trigger_comic_generation(
+    async def trigger_comic_generation(
         self,
         topics: list[dict[str, object]],
         group_id: str,
@@ -870,17 +910,17 @@ class GroupDailyAnalysis(Star):
         umo: str,
         trace: TraceContext | None = None,
     ) -> None:
-        await self.comic_command_handler._trigger_comic_generation(
+        await self.comic_command_handler.trigger_comic_generation(
             topics, group_id, platform_id, umo, trace=trace
         )
 
     @property
-    def _comic_group_tasks(self) -> dict[str, asyncio.Task[object]]:
-        return self.comic_command_handler._comic_group_tasks
+    def comic_group_tasks(self) -> dict[str, asyncio.Task[object]]:
+        return self.comic_command_handler.comic_group_tasks
 
-    @_comic_group_tasks.setter
-    def _comic_group_tasks(self, val: dict[str, asyncio.Task[object]]) -> None:
-        self.comic_command_handler._comic_group_tasks = val
+    @comic_group_tasks.setter
+    def comic_group_tasks(self, val: dict[str, asyncio.Task[object]]) -> None:
+        self.comic_command_handler.comic_group_tasks = val
 
     @staticmethod
     def _detect_image_ext(data: bytes) -> str:

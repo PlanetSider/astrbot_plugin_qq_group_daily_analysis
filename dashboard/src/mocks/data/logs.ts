@@ -1,9 +1,9 @@
-import { PluginLogItem } from "../../entities/log/model/types";
+import { PluginLogItem } from "@/entities/log/model/types";
 
 /**
  * 结构化拟真 Mock 插件日志矩阵 (全级别、多标签、多链路、多平台覆盖)
  * 包含：DEBUG、INFO、WARNING、ERROR、CRITICAL 完整等级，
- * 涵盖：LLM, Comic, Album, OneBot, QQOfficial, Telegram, Discord, Scheduler, Resilience, Render, WebUI 全标签
+ * 覆盖分析任务、渲染资源、平台接入、配置存储等功能分类
  */
 export const mockPluginLogs: PluginLogItem[] = [
   // 1. 系统初始化与 WebUI 交互日志
@@ -14,7 +14,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.plugin",
     tag: "WebUI",
-    message: "AstrBot QQ Group Daily Analysis Plugin v0.8.0 initialized. Storage backend: SQLite WAL mode.",
+    message:
+      "AstrBot QQ Group Daily Analysis Plugin v0.8.0 initialized. Storage backend: SQLite WAL mode.",
     raw: "[22:00:01] [INFO] [WebUI] AstrBot QQ Group Daily Analysis Plugin v0.8.0 initialized.",
   },
   {
@@ -60,7 +61,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.filter",
     tag: "OneBot",
-    message: "Fetched 1540 raw messages from OneBot adapter. Retained 1210 valid messages after bot/spam filters.",
+    message:
+      "Fetched 1540 raw messages from OneBot adapter. Retained 1210 valid messages after bot/spam filters.",
     raw: "[00:00:06] [INFO] [OneBot] Fetched 1540 raw messages, retained 1210 messages after filter pipeline",
     trace_id: "trace-20260926-001",
     stage: "data_fetching",
@@ -72,7 +74,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.llm",
     tag: "LLM",
-    message: "Invoking DeepSeek Analyzer [deepseek-chat] (temperature: 0.7, context_window: 1210 msgs)",
+    message:
+      "Invoking DeepSeek Analyzer [deepseek-chat] (temperature: 0.7, context_window: 1210 msgs)",
     raw: "[00:00:07] [INFO] [LLM] Invoking LLM Analyzer with provider [deepseek-chat]",
     trace_id: "trace-20260926-001",
     stage: "llm_analysis",
@@ -84,7 +87,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.llm",
     tag: "LLM",
-    message: "LLM analysis succeeded. Prompt tokens: 3,820, Completion tokens: 1,000. Extracted 4 key topics.",
+    message:
+      "LLM analysis succeeded. Prompt tokens: 3,820, Completion tokens: 1,000. Extracted 4 key topics.",
     raw: "[00:00:14] [INFO] [LLM] LLM analysis succeeded. Extracted 4 key topics.",
     trace_id: "trace-20260926-001",
     stage: "llm_analysis",
@@ -96,7 +100,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.render",
     tag: "Render",
-    message: "Rendering HTML template [HatsuneMiku] with Playwright (viewport: 1080x2840, dpr: 2.0)",
+    message:
+      "Rendering HTML template [HatsuneMiku] with Playwright (viewport: 1080x2840, dpr: 2.0)",
     raw: "[00:00:16] [INFO] [Render] Rendering HTML poster template [HatsuneMiku]...",
     trace_id: "trace-20260926-001",
     stage: "report_rendering",
@@ -108,7 +113,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.dispatch",
     tag: "Scheduler",
-    message: "Poster generated (size: 471.6KB) and dispatched to group 123456789 successfully (Total duration: 13.33s)",
+    message:
+      "Poster generated (size: 471.6KB) and dispatched to group 123456789 successfully (Total duration: 13.33s)",
     raw: "[00:00:18] [INFO] [Scheduler] Poster generated and dispatched to group 123456789 successfully",
     trace_id: "trace-20260926-001",
     stage: "message_dispatch",
@@ -122,7 +128,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.album",
     tag: "Album",
-    message: "Uploaded 4 daily analysis poster and comic assets to QQ Group Album [2026年9月日报集] (ID: alb_202609)",
+    message:
+      "Uploaded 4 daily analysis poster and comic assets to QQ Group Album [2026年9月日报集] (ID: alb_202609)",
     raw: "[00:03:52] [INFO] [Album] Uploaded 4 daily analysis poster and comic assets to QQ Group Album",
     trace_id: "trace-20260926-002-dense",
     stage: "message_dispatch",
@@ -134,7 +141,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.comic",
     tag: "Comic",
-    message: "Comic storyboard generated: 6 panels extracted. Requesting image drawing engine (DALL-E 3)...",
+    message:
+      "Comic storyboard generated: 6 panels extracted. Requesting image drawing engine (DALL-E 3)...",
     raw: "[00:02:10] [INFO] [Comic] Comic storyboard generated: 6 panels extracted.",
     trace_id: "trace-20260926-002-dense",
     stage: "comic_generation",
@@ -160,7 +168,8 @@ export const mockPluginLogs: PluginLogItem[] = [
     level: "WARNING",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.comic",
     tag: "Comic",
-    message: "Comic generation triggered upstream 429 Too Many Requests. Fallback to text + HTML report activated.",
+    message:
+      "Comic generation triggered upstream 429 Too Many Requests. Fallback to text + HTML report activated.",
     raw: "[00:45:09] [WARN] [Comic] Comic generation triggered rate limit (HTTP 429). Falling back to pure text.",
     trace_id: "trace-20260926-005-tg-warning",
     stage: "comic_generation",
@@ -216,7 +225,8 @@ openai.APIConnectionError: Connection timeout to api.openai.com:443 after 20000m
     level: "INFO",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.resilience",
     tag: "Resilience",
-    message: "Saved intermediate checkpoint chk-20260926-004 for task trace-20260926-004-timeout. Ready for resume.",
+    message:
+      "Saved intermediate checkpoint chk-20260926-004 for task trace-20260926-004-timeout. Ready for resume.",
     raw: "[00:30:02] [INFO] [Resilience] Saved intermediate checkpoint chk-20260926-004 for task. Ready for resume.",
     trace_id: "trace-20260926-004-timeout",
     stage: "llm_analysis",
@@ -228,15 +238,48 @@ openai.APIConnectionError: Connection timeout to api.openai.com:443 after 20000m
     level: "CRITICAL",
     logger_name: "astrbot_plugin_qq_group_daily_analysis.storage",
     tag: "Resilience",
-    message: "SQLite database lock conflict detected after 5 retries. Write transaction aborted to prevent corruption.",
+    message:
+      "SQLite database lock conflict detected after 5 retries. Write transaction aborted to prevent corruption.",
     raw: "[00:59:00] [CRITICAL] [Resilience] SQLite database lock conflict detected after 5 retries.",
   },
 ];
 
+// 新增功能使用独立演示记录，避免只有筛选选项却没有可查看的内容。
+for (const [index, [tag, message]] of [
+  ["Typst", "演示：初音报告本地排版完成，生成 PNG。"],
+  ["T2I", "演示：自定义 T2I 请求成功，截图超时 20 秒，请求等待上限 40 秒。"],
+  ["Resources", "演示：已复用初音标题字体子集，大小 14.3 KiB。"],
+  ["Config", "演示：渲染方案已保存，配置备份已保留。"],
+  ["Storage", "演示：阶段检查点已保存，可用于续跑分析。"],
+  ["Messages", "演示：读取 1540 条消息，清洗后保留 1210 条。"],
+  ["Incremental", "演示：本轮增量摘要合并完成。"],
+  ["Tasks", "演示：任务已取消，后续渲染与发送已停止。"],
+  ["Dispatch", "演示：报告已发送，群文件上传完成。"],
+  ["Satori", "演示：Satori 已拉取群聊历史消息。"],
+  ["Platform", "演示：平台实例已就绪，群聊绑定配置已确认。"],
+  ["General", "演示：插件初始化完成。"],
+].entries()) {
+  mockPluginLogs.push({
+    id: `log-category-${tag}`,
+    timestamp: Date.now() - (index + 1) * 10000,
+    time_str: "",
+    level: "INFO",
+    logger_name: "demo",
+    tag,
+    message,
+    raw: "",
+  });
+}
+
 // 与后端日志的秒级时间戳和日期格式保持一致。
-for (const entry of mockPluginLogs) {
+for (const [index, entry] of mockPluginLogs.entries()) {
   const date = new Date(entry.timestamp);
   entry.timestamp /= 1000;
   entry.time_str = `${date.toLocaleString("sv-SE")}.${String(date.getMilliseconds()).padStart(3, "0")}`;
-  if (entry.raw) entry.raw = entry.raw.replace(/^\[\d{2}:\d{2}:\d{2}\]/, `[${entry.time_str}]`);
+  // 演示用代码位置，不指向真实源码；保留一条缺少调用位置的旧记录。
+  if (entry.id !== "log-sys-0") {
+    entry.location = `demo_${entry.tag.toLowerCase()}.py:${40 + index * 7}`;
+    entry.function_name = `Demo${entry.tag}.run`;
+  }
+  entry.raw = `[${entry.time_str}] [${entry.level}] [${entry.location || entry.logger_name}]${entry.function_name ? ` [${entry.function_name}]` : ""}: ${entry.message}`;
 }

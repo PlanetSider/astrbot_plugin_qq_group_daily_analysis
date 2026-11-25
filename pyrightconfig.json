@@ -13,16 +13,10 @@
   ],
   "extraPaths": [
     "../../..",
-    "../../../.venv/Lib/site-packages",
-    "../../../.venv/lib/python3.12/site-packages",
-    ".venv/Lib/site-packages",
-    ".venv/lib/python3.12/site-packages",
     "."
   ],
-  "venvPath": "../../..",
-  "venv": ".venv",
   "pythonVersion": "3.12",
-  "typeCheckingMode": "standard",
+  "typeCheckingMode": "strict",
   "reportMissingTypeStubs": false,
   "reportMissingImports": "error",
   "reportIncompatibleMethodOverride": "error",
@@ -51,5 +45,8 @@
   "reportCallInDefaultInitializer": "error",
   "reportTypeCommentUsage": "error",
   "reportConstantRedefinition": "error",
-  "reportMatchNotExhaustive": "error"
+  "reportMatchNotExhaustive": "error",
+  "reportDeprecated": "error",
+  "venvPath": ".",
+  "venv": ".venv"
 }

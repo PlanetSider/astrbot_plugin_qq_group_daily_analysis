@@ -14,7 +14,7 @@ from src.infrastructure.drawing.api_requests.dashscope import build_dashscope_pa
 )
 def test_dashscope_preserves_model_capabilities(model, sequential, limit):
     context = DrawingRequestContext(
-        SimpleNamespace(_get_provider_value=lambda key, provider: provider.get(key)), None, None
+        SimpleNamespace(get_provider_value=lambda key, provider: provider.get(key)), None, None
     )
     payload = build_dashscope_payload(context, "提示词", ["reference"], {
         "model": model, "image_size": "2K", "aspect_ratio": "1:1", "n": 20,
@@ -23,7 +23,10 @@ def test_dashscope_preserves_model_capabilities(model, sequential, limit):
     parameters = payload["parameters"]
     assert parameters["n"] == limit
     assert parameters["size"] == "2048*2048"
-    assert payload["input"]["messages"][0]["content"] == [{"text": "提示词"}, {"image": "reference"}]
+    text, image = payload["input"]["messages"][0]["content"]
+    assert text["text"].startswith("The attached image shows the recurring protagonist")
+    assert text["text"].endswith("提示词")
+    assert image == {"image": "reference"}
     assert ("negative_prompt" in parameters) is not model.startswith("wan2.7")
     assert ("enable_sequential" in parameters) is sequential
     assert ("thinking_mode" in parameters) is (model.startswith("wan2.7") and not sequential)

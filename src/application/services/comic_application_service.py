@@ -11,8 +11,10 @@ from ...infrastructure.drawing.drawing_client import (
     DrawingClient,
     ImageDownloadFailedError,
 )
+from ...infrastructure.drawing.external_drawing_adapter import ExternalDrawingAdapter
 from ...shared.constants import PLUGIN_NAME, AnalysisStage
 from ...shared.trace_context import TraceContext
+from ...shared.type_guards import is_string_mapping
 from ...utils.logger import logger
 
 if TYPE_CHECKING:
@@ -22,7 +24,15 @@ if TYPE_CHECKING:
 
     from ...domain.repositories.analysis_repository import IAnalysisProvider
     from ...domain.value_objects import SummaryTopic
+    from ...domain.value_objects.group_session import GroupSession
     from ...infrastructure.config.config_manager import ConfigManager
+
+
+CHARACTER_REFERENCE_STORYBOARD_INSTRUCTION = (
+    "【主角设定】scene 应可独立用于文生图。保留人格或角色设定中明确写出的外貌、服饰和配饰，"
+    "在所有分格保持同一位主角。不要从语气推测外貌，也不要把模板示例人物的造型当作角色设定。"
+    "分镜阶段看不到参考图；不要在 scene 中描述或提及附件。"
+)
 
 
 class ComicApplicationService:
@@ -37,7 +47,7 @@ class ComicApplicationService:
     drawing_client: DrawingClient
     config_manager: ConfigManager
     plugin_data_dir: Path
-    context: Context | None
+    external_drawing: ExternalDrawingAdapter
 
     def __init__(
         self,
@@ -46,18 +56,20 @@ class ComicApplicationService:
         config_manager: ConfigManager,
         plugin_data_dir: Path,
         context: Context | None = None,
+        external_drawing: ExternalDrawingAdapter | None = None,
     ) -> None:
         self.llm_analyzer = llm_analyzer
         self.drawing_client = drawing_client
         self.config_manager = config_manager
         self.plugin_data_dir = plugin_data_dir
-        self.context = context
+        self.external_drawing = external_drawing or ExternalDrawingAdapter(context)
 
     async def generate_comic(
         self,
         topics: Sequence[SummaryTopic] | Sequence[dict[str, object]],
         group_id: str,
         umo: str | None = None,
+        session: GroupSession | None = None,
     ) -> tuple[bytes | None, str | None]:
         """
         生成漫画并返回图片字节数据。
@@ -66,6 +78,7 @@ class ComicApplicationService:
             topics: 待改编的群聊话题。
             group_id: 目标群组标识。
             umo: 用于选择模型的消息来源。
+            session: 已解析的真实群会话，用于隔离风格进度。
 
         Returns:
             (comic_bytes, fallback_url):
@@ -79,27 +92,15 @@ class ComicApplicationService:
         character_name = (
             str(character.get("name", "")).strip() if character else ""
         ) or "默认配置"
-        persona_id = self.config_manager.get_comic_character_persona_id(character)
-        prompt_template = self.config_manager.get_comic_character_storyboard_prompt(
-            character
-        )
         logger.info(
             f"[Comic] 开始为群 {group_id} 生成每日漫画，角色方案: {character_name}"
         )
-
-        trace = TraceContext.current()
-
-        scene_prompt = await self._generate_scene_prompt(
-            topics, umo, character_name, persona_id, prompt_template
+        persona_id = self.config_manager.get_comic_character_persona_id(character)
+        reference_image_paths = self.config_manager.get_drawing_reference_images(
+            character, select=False
         )
-        if not scene_prompt:
-            return None, None
-
-        logger.debug(f"[Comic] 漫画 Prompt 已生成，长度: {len(scene_prompt)}")
-
-        # 3. 加载当前角色方案配置的全部参考图。
-        images_data = []
-        reference_image_paths = self.config_manager.get_drawing_reference_images()
+        # 同一份分镜可能交给带图或纯文本后端；分镜正文只使用已知的文字设定。
+        images_data: list[tuple[bytes, str]] = []
         for reference_image_path in reference_image_paths:
             reference_image = await self._fetch_reference_image(reference_image_path)
             if reference_image:
@@ -110,20 +111,47 @@ class ComicApplicationService:
                     f"[Comic] 无法加载参考图: {Path(reference_image_path).name}"
                 )
 
+        prompt_template = await asyncio.to_thread(
+            self.config_manager.get_comic_character_storyboard_prompt,
+            character,
+            session,
+        )
+        if images_data:
+            prompt_template = (
+                f"{prompt_template}\n\n{CHARACTER_REFERENCE_STORYBOARD_INSTRUCTION}"
+            )
+        trace = TraceContext.current()
+
+        scene_prompt = await self._generate_scene_prompt(
+            topics, umo, character_name, persona_id, prompt_template
+        )
+        if not scene_prompt:
+            return None, None
+
+        logger.debug(f"[Comic] 漫画 Prompt 已生成，长度: {len(scene_prompt)}")
+
+        # 面板的阶段徽标统计已加载的参考图；实际入选的张数记录在单次请求中。
         draw_ctx = (
-            trace.span_async(AnalysisStage.COMIC_DRAWING) if trace else nullcontext()
+            trace.span_async(
+                AnalysisStage.COMIC_DRAWING,
+                {"reference_images_count": len(images_data)},
+            )
+            if trace
+            else nullcontext()
         )
         async with draw_ctx as draw_rec:
             # 4. 若配置为外部绘图后端，优先走对应插件出图
             backend = self.config_manager.get_drawing_backend()
             if backend in {"general_plugin", "big_banana"}:
                 if backend == "general_plugin":
-                    external_comic_bytes = await self._generate_via_general_plugin(
+                    external_comic_bytes = await self.external_drawing.generate_general(
                         scene_prompt, images_data
                     )
                 else:
-                    external_comic_bytes = await self._generate_via_big_banana(
-                        scene_prompt, images_data
+                    external_comic_bytes = (
+                        await self.external_drawing.generate_big_banana(
+                            scene_prompt, images_data
+                        )
                     )
                 if external_comic_bytes and not any(
                     external_comic_bytes == reference[0] for reference in images_data
@@ -136,13 +164,12 @@ class ComicApplicationService:
                             {
                                 "backend": backend,
                                 "scene_prompt_len": len(scene_prompt),
-                                "reference_images_count": len(images_data),
                                 "image_bytes": len(external_comic_bytes),
                                 "success": True,
                                 "prompts": {
                                     "comic_drawing": {
                                         "prompt": scene_prompt,
-                                        "system_prompt": f"绘图后端: {backend} | 角色方案: {character_name} | 参考图数: {len(images_data)}",
+                                        "system_prompt": f"绘图后端: {backend} | 角色方案: {character_name} | 分镜正文 | 已加载参考图: {len(images_data)}",
                                         "completion": f"出图完成（体积: {round(len(external_comic_bytes) / 1024, 1)} KB）",
                                         "provider_type": backend,
                                     }
@@ -207,7 +234,7 @@ class ComicApplicationService:
                 draw_prompts = {
                     "comic_drawing": {
                         "prompt": scene_prompt,
-                        "system_prompt": f"绘图引擎: {backend} | 角色方案: {character_name} | 参考图数: {len(images_data)}",
+                        "system_prompt": f"绘图引擎: {backend} | 角色方案: {character_name} | 分镜正文 | 已加载参考图: {len(images_data)}",
                         "completion": f"出图完成（体积: {round(len(final_comic_bytes) / 1024, 1)} KB）"
                         if final_comic_bytes
                         else (
@@ -220,7 +247,6 @@ class ComicApplicationService:
                     {
                         "backend": backend,
                         "scene_prompt_len": len(scene_prompt),
-                        "reference_images_count": len(images_data),
                         "image_bytes": len(final_comic_bytes)
                         if final_comic_bytes
                         else 0,
@@ -277,7 +303,7 @@ class ComicApplicationService:
             if sb_rec:
                 sb_prompts: dict[str, object] = {}
                 llm_prompts = trace.metadata.get("llm_prompts") if trace else None
-                if isinstance(llm_prompts, dict):
+                if is_string_mapping(llm_prompts):
                     for k, p in llm_prompts.items():
                         if "comic" in str(k) or str(k) == "comic_storyboards":
                             sb_prompts[str(k)] = p
@@ -348,7 +374,7 @@ class ComicApplicationService:
             umo: 用于选择重写模型的消息来源。
 
         Returns:
-            图片字节、最终失败原因、下载失败时的兜底 URL 和实际使用的提示词。
+            图片字节、最终失败原因、下载失败时的兜底 URL 和最终使用的分镜正文。
         """
         # 6. 调用绘图 API，捕获"有 URL 但下载失败"的情况
         try:
@@ -420,191 +446,6 @@ class ComicApplicationService:
                     last_error = "绘图服务原样返回了参考图"
 
         return final_comic_bytes, last_error, None, scene_prompt
-
-    async def _generate_via_general_plugin(
-        self,
-        scene_prompt: str,
-        images_data: list[tuple[bytes, str]] | None,
-    ) -> bytes | None:
-        """通过「通用生图」插件的公共 API 生成漫画。
-
-        未安装、未激活、未配置 API 或调用失败时返回 None，由调用方回退内置 DrawingClient。
-
-        Returns:
-            生成图片的二进制数据；失败时返回 None。
-        """
-        if self.context is None:
-            logger.debug("[Comic] 未注入插件 Context，跳过通用生图后端。")
-            return None
-        try:
-            meta = self.context.get_registered_star("astrbot_plugin_image_generation")
-        except Exception as exc:
-            logger.debug(f"[Comic] 获取通用生图插件注册信息失败: {exc}")
-            return None
-        image_plugin = meta.star_cls if meta and meta.activated else None
-        if image_plugin is None:
-            logger.warning(
-                "[Comic] 未检测到已激活的「通用生图」插件，回退内置绘图后端。"
-            )
-            return None
-
-        public_api = getattr(image_plugin, "public_api", None)
-        if public_api is None:
-            logger.warning("[Comic] 通用生图插件未暴露 public_api，回退内置绘图后端。")
-            return None
-
-        try:
-            logger.info("[Comic] 通过「通用生图」插件公共 API 生成漫画...")
-            result = await public_api.generate_image_files(
-                prompt=scene_prompt,
-                source="群分析插件",
-                aspect_ratio="16:9",
-                reference_image_data=images_data,
-                timeout_seconds=600,
-            )
-        except Exception as exc:
-            logger.error(f"[Comic] 通用生图后端调用异常: {exc}")
-            return None
-
-        if not getattr(result, "ok", False):
-            code = str(getattr(result, "code", ""))
-            message = getattr(result, "message", "") or getattr(result, "error", "")
-            hint = ""
-            if code == "prompt_blocked":
-                hint = "（提示词被通用生图插件安全审核拦截，可调整其审核配置或精简 scene 提示词）"
-            elif code == "api_key_missing":
-                hint = "（通用生图插件未配置 API Key，需先在通用生图插件中配置）"
-            elif code == "timeout":
-                hint = "（等待通用生图任务结果超时）"
-            elif code == "rate_limited":
-                hint = "（命中通用生图插件额度/频率限制）"
-            logger.warning(f"[Comic] 通用生图后端失败 [{code}]: {message}{hint}")
-            return None
-
-        paths = list(getattr(result, "paths", None) or [])
-        if not paths:
-            logger.warning(
-                "[Comic] 通用生图后端未返回图片路径（可能参考图被忽略或结果为空，请检查通用生图插件配置与参考图大小限制）。"
-            )
-            return None
-        try:
-            return Path(paths[0]).read_bytes()
-        except OSError as exc:
-            logger.warning(f"[Comic] 读取通用生图后端结果失败: {exc}")
-            return None
-
-    async def _generate_via_big_banana(
-        self,
-        scene_prompt: str,
-        images_data: list[tuple[bytes, str]] | None,
-    ) -> bytes | None:
-        """通过「大香蕉」插件的绘图管线生成漫画。
-
-        大香蕉支持 Gemini、SiliconFlow、OpenAI 等多家提供商。
-
-        Returns:
-            生成图片的二进制数据；失败时返回 None。
-        """
-        if self.context is None:
-            logger.debug("[Comic] 未注入插件 Context，跳过「大香蕉」后端。")
-            return None
-        try:
-            meta = self.context.get_registered_star("astrbot_plugin_big_banana")
-        except Exception as exc:
-            logger.debug(f"[Comic] 获取「大香蕉」插件注册信息失败: {exc}")
-            return None
-        plugin = meta.star_cls if meta and meta.activated else None
-        if plugin is None:
-            logger.warning("[Comic] 未检测到已激活的「大香蕉」插件，回退内置绘图后端。")
-            return None
-
-        drawing_pipeline = getattr(plugin, "drawing_pipeline", None)
-        if drawing_pipeline is None:
-            logger.warning("[Comic] 「大香蕉」插件未初始化绘图管线，回退内置绘图后端。")
-            return None
-
-        ImageResource = self._import_big_banana_image_resource(plugin)
-        if ImageResource is None:
-            logger.warning("[Comic] 无法导入「大香蕉」图片资源类型，回退内置绘图后端。")
-            return None
-
-        image_list = None
-        if images_data:
-            image_list = []
-            for img_bytes, _mime in images_data:
-                resource = ImageResource.from_bytes(img_bytes)
-                if resource:
-                    image_list.append(resource)
-            if not image_list:
-                logger.warning(
-                    "[Comic] 参考图无法解析为「大香蕉」图片资源，将不带参考图生成。"
-                )
-
-        params: dict[str, object] = {
-            "prompt": scene_prompt,
-            "capability": "image_generation",
-            "sub_brain": False,
-            "url": False,
-            "aspect_ratio": "16:9",
-            "image_size": "1K",
-        }
-
-        try:
-            logger.info("[Comic] 通过「大香蕉」插件绘图管线生成漫画...")
-            result = await drawing_pipeline.run(params, image_list)
-        except Exception as exc:
-            logger.error(f"[Comic] 「大香蕉」绘图管线调用异常: {exc}")
-            return None
-
-        if getattr(result, "error_message", None):
-            logger.warning(f"[Comic] 「大香蕉」生成失败: {result.error_message}")
-            return None
-
-        images = getattr(result, "images", None) or []
-        if not images:
-            logger.warning("[Comic] 「大香蕉」未返回图片。")
-            return None
-        try:
-            image_bytes = images[0].bytes
-        except Exception as exc:
-            logger.warning(f"[Comic] 读取「大香蕉」生成结果失败: {exc}")
-            return None
-        if not image_bytes:
-            logger.warning("[Comic] 「大香蕉」返回的图片为空。")
-            return None
-        return image_bytes
-
-    @staticmethod
-    def _import_big_banana_image_resource(plugin: object) -> type | None:
-        """导入「大香蕉」插件的 ImageResource 类型。
-
-        AstrBot 以 ``data.plugins.<插件名>.main`` 形式加载插件，模块名并非
-        ``astrbot_plugin_big_banana``，因此先从插件类的模块路径推导包名导入；
-        推导失败时回退直接导入，兼容 pip 安装或测试环境注入的场景。
-
-        Args:
-            plugin: 已激活的大香蕉插件实例。
-
-        Returns:
-            ImageResource 类型；无法导入时返回 None。
-        """
-        import importlib
-
-        module_name = getattr(type(plugin), "__module__", "") or ""
-        candidate_modules = []
-        if module_name and "." in module_name:
-            candidate_modules.append(module_name.rsplit(".", 1)[0] + ".core.schemas")
-        candidate_modules.append("astrbot_plugin_big_banana.core.schemas")
-
-        for module_path in candidate_modules:
-            try:
-                schemas_module = importlib.import_module(module_path)
-            except Exception:
-                continue
-            image_resource = getattr(schemas_module, "ImageResource", None)
-            if image_resource is not None:
-                return image_resource
-        return None
 
     async def _fetch_reference_image(self, image_ref: str) -> tuple[bytes, str] | None:
         """从插件目录、AstrBot files、本地路径、HTTP URL 或 Base64 Data URL 获取已选参考图。

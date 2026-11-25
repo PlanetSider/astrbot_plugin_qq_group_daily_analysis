@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from ....shared.type_guards import is_object_list, is_string_mapping
 from ....utils.logger import logger
+from ..character_reference import format_character_prompt
 
 if TYPE_CHECKING:
     from .context import DrawingRequestContext
@@ -17,13 +19,13 @@ async def call_gemini_api(
     context: DrawingRequestContext,
     prompt: str,
     images_data: list[tuple[bytes, str]] | None = None,
-    provider: dict | None = None,
+    provider: dict[str, object] | None = None,
 ) -> bytes | None:
     """调用 Google Gemini Interactions 图片接口。
 
     Args:
         prompt: 图片生成或编辑提示词。
-        images_data: 可选参考图片及其 MIME 类型列表，当前只使用第一张。
+        images_data: 可选参考图片及其 MIME 类型列表。
 
     Returns:
         最后一个模型输出中的图片二进制数据。
@@ -69,9 +71,12 @@ async def call_gemini_api(
         "jpg": "image/jpeg",
     }.get(output_format)
 
-    input_content: list[dict[str, str]] = [{"type": "text", "text": prompt}]
+    selected_images = images_data or []
+    input_content: list[dict[str, str]] = [
+        {"type": "text", "text": format_character_prompt(prompt, len(selected_images))}
+    ]
     reference_bytes = 0
-    for image_bytes, mime in images_data or []:
+    for image_bytes, mime in selected_images:
         image_mime = mime if mime.startswith("image/") else "image/png"
         input_content.append(
             {
@@ -126,22 +131,22 @@ async def call_gemini_api(
             f"<body len={len(resp.content)}>"
         ) from e
 
-    steps = data.get("steps") if isinstance(data, dict) else None
+    steps = data.get("steps") if is_string_mapping(data) else None
     model_outputs = (
         [
             step
             for step in steps
-            if isinstance(step, dict) and step.get("type") == "model_output"
+            if is_string_mapping(step) and step.get("type") == "model_output"
         ]
-        if isinstance(steps, list)
+        if is_object_list(steps)
         else []
     )
     for step in reversed(model_outputs):
         content = step.get("content")
-        if not isinstance(content, list):
+        if not is_object_list(content):
             continue
         for item in reversed(content):
-            if not isinstance(item, dict) or item.get("type") != "image":
+            if not is_string_mapping(item) or item.get("type") != "image":
                 continue
             encoded = item.get("data")
             if not isinstance(encoded, str) or not encoded.strip():
@@ -152,14 +157,14 @@ async def call_gemini_api(
                 logger.debug(f"[Comic] 跳过无效 Gemini 最终图片: {exc}")
 
     # 当响应包含 steps 时，只在最终模型输出中回退提取图片，避免误取中间推理图。
-    fallback_data: object = model_outputs if isinstance(steps, list) else data
+    fallback_data: object = model_outputs if is_object_list(steps) else data
     image = await context.extract_image(
         fallback_data, context.get_request_proxy(provider)
     )
     if image:
         return image
 
-    status = data.get("status") if isinstance(data, dict) else None
+    status = data.get("status") if is_string_mapping(data) else None
     raise Exception(
         f"Gemini API 未返回最终图片 (status={status or 'unknown'}): "
         f"{context.summarize_response(data)}"

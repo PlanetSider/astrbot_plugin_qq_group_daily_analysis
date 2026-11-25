@@ -1,22 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import { testTemplateCdn } from "../../../entities/config/api/configApi";
-import type { TemplateCdnProbe } from "../../../entities/config/model/cdnProbe";
+import { testTemplateCdn } from "@/entities/config/api/configApi";
+import type { TemplateCdnProbe } from "@/entities/config/model/cdnProbe";
 
 export function useTemplateCdnProbe(baseUrl: string) {
   const sequence = useRef(0);
+  const pending = useRef(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TemplateCdnProbe | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     sequence.current += 1;
+    pending.current = false;
     setLoading(false);
     setResult(null);
     setError("");
-    return () => { sequence.current += 1; };
+    return () => {
+      sequence.current += 1;
+    };
   }, [baseUrl]);
 
   const run = async () => {
+    if (pending.current) return;
+    pending.current = true;
     const requestId = ++sequence.current;
     setLoading(true);
     setResult(null);
@@ -29,7 +35,10 @@ export function useTemplateCdnProbe(baseUrl: string) {
         setError(err instanceof Error ? err.message : "CDN 检测失败");
       }
     } finally {
-      if (sequence.current === requestId) setLoading(false);
+      if (sequence.current === requestId) {
+        pending.current = false;
+        setLoading(false);
+      }
     }
   };
 

@@ -7,15 +7,20 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
+from ....application.services.task_guard import DuplicateGroupTaskError
+from ....domain.value_objects.group_session import GroupSession
 from ....shared.constants import PLUGIN_NAME
 from ....utils.logger import logger
 from ...config.config_backup_reader import ConfigBackupReader
 from ..web_compat import WebApiResponse, error_response, json_response, request
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from ....application.dto.webui_dto import (
         CheckpointDeleteDTO,
         CheckpointDetailQueryDTO,
@@ -33,6 +38,14 @@ if TYPE_CHECKING:
         IIncrementalStore,
     )
     from ...persistence.trace_sqlite_store import TraceSQLiteStore
+
+
+class IncrementalGroupDirectoryItemDTO(TypedDict):
+    """按平台实例隔离的增量群聊目录。"""
+
+    group_id: str
+    platform_id: str
+    group_name: str
 
 
 class DirectoryStatsDTO(TypedDict):
@@ -54,6 +67,31 @@ class DataManagementRoutes:
         self.trace_store = trace_store
         self.analysis_service = analysis_service
         self.report_output_dir = report_output_dir
+
+    @asynccontextmanager
+    async def _mutation_guard(
+        self, group_id: str, platform_id: str | None = None
+    ) -> AsyncGenerator[None, None]:
+        """删除批次、重置游标和清理快照时，与群分析任务互斥。
+
+        Args:
+            group_id: 正在管理的存储群标识。
+
+        Yields:
+            None: 已持有相关群任务锁。
+
+        Raises:
+            DuplicateGroupTaskError: 群任务仍在执行。
+        """
+        async with AsyncExitStack() as stack:
+            if self.analysis_service:
+                for task_type in ("daily", "incremental", "final"):
+                    await stack.enter_async_context(
+                        self.analysis_service.group_lock(
+                            group_id, task_type, platform_id
+                        )
+                    )
+            yield
 
     @property
     def _incremental_store(self) -> IIncrementalStore | None:
@@ -95,7 +133,7 @@ class DataManagementRoutes:
             data_dir = self._get_plugin_data_dir()
 
             # 头像缓存
-            avatar_dir = data_dir / "cache" / "avatars" if data_dir else None
+            avatar_dir = data_dir / "avatar" if data_dir else None
             avatar_stats = (
                 self._dir_stats(avatar_dir)
                 if avatar_dir
@@ -131,25 +169,10 @@ class DataManagementRoutes:
             if self.report_output_dir and Path(self.report_output_dir).exists():
                 report_stats = self._dir_stats(Path(self.report_output_dir))
 
-            # 临时文件（AstrBot 全局 temp 目录下本插件生成的图片）
+            # 宿主 io_temp_img_* 不包含插件归属，不统计或清理共享临时文件。
             temp_stats: DirectoryStatsDTO = {"count": 0, "size_bytes": 0}
-            try:
-                from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-
-                temp_dir = Path(get_astrbot_temp_path())
-                if temp_dir.exists():
-                    count = 0
-                    size = 0
-                    for f in temp_dir.iterdir():
-                        if f.is_file() and f.name.startswith("io_temp_img_"):
-                            count += 1
-                            try:
-                                size += f.stat().st_size
-                            except OSError:
-                                pass
-                    temp_stats = {"count": count, "size_bytes": size}
-            except Exception:
-                pass
+            if data_dir:
+                temp_stats = self._dir_stats(data_dir / "template_preview_cache")
 
             return json_response(
                 {
@@ -172,17 +195,13 @@ class DataManagementRoutes:
         """清空头像缓存目录"""
         try:
             data_dir = self._get_plugin_data_dir()
-            avatar_dir = data_dir / "cache" / "avatars" if data_dir else None
+            avatar_dir = data_dir / "avatar" if data_dir else None
             if not avatar_dir or not avatar_dir.exists():
                 return json_response({"status": "ok", "data": {"deleted": 0}})
-            deleted = 0
-            for f in avatar_dir.iterdir():
-                if f.is_file():
-                    try:
-                        f.unlink()
-                        deleted += 1
-                    except OSError:
-                        pass
+            from diskcache import Cache
+
+            with Cache(str(avatar_dir)) as cache:
+                deleted = await asyncio.to_thread(cache.clear)
             logger.info(f"[plugin-data] 已清空头像缓存，删除 {deleted} 个文件")
             return json_response({"status": "ok", "data": {"deleted": deleted}})
         except Exception as e:
@@ -219,25 +238,10 @@ class DataManagementRoutes:
 
     async def api_clear_temp_files(self) -> WebApiResponse:
         """清空由本插件产生的临时图片文件（io_temp_img_* 前缀）"""
-        try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-
-            temp_dir = Path(get_astrbot_temp_path())
-            if not temp_dir.exists():
-                return json_response({"status": "ok", "data": {"deleted": 0}})
-            deleted = 0
-            for f in temp_dir.iterdir():
-                if f.is_file() and f.name.startswith("io_temp_img_"):
-                    try:
-                        f.unlink()
-                        deleted += 1
-                    except OSError:
-                        pass
-            logger.info(f"[plugin-data] 已清空临时文件，删除 {deleted} 个文件")
-            return json_response({"status": "ok", "data": {"deleted": deleted}})
-        except Exception as e:
-            logger.error(f"清空临时文件异常: {e}", exc_info=True)
-            return error_response(str(e), status_code=500)
+        return error_response(
+            "宿主临时文件无法按插件区分，请在文件与素材管理中逐项清理插件预览缓存",
+            status_code=400,
+        )
 
     async def api_clear_custom_templates(self) -> WebApiResponse:
         """清空用户自定义报告模板目录"""
@@ -322,18 +326,47 @@ class DataManagementRoutes:
         """获取所有拥有增量批次或游标记录的群号列表"""
         try:
             store = self._incremental_store
-            tracked: set[str] = set()
-            if store:
-                tracked.update(await store.get_tracked_groups())
-
-            if self.trace_store:
-                for g in await asyncio.to_thread(self.trace_store.get_distinct_groups):
-                    gid = str(g.get("group_id", "")).strip()
-                    if gid:
-                        tracked.add(gid)
-
-            sorted_groups = sorted(tracked)
-            return json_response({"status": "ok", "data": {"groups": sorted_groups}})
+            history = await asyncio.to_thread(
+                self.trace_store.get_distinct_groups, by_session=True
+            )
+            sessions: set[GroupSession] = (
+                set(await store.get_tracked_sessions()) if store else set()
+            )
+            # 旧键不包含平台；按升级前群号未碰撞的约定，归属最近一次已记录的平台。
+            legacy = [session for session in sessions if not session.platform_id]
+            if store and legacy:
+                latest = {
+                    item["group_id"]: item
+                    for item in await asyncio.to_thread(
+                        self.trace_store.get_distinct_groups
+                    )
+                }
+                for session in legacy:
+                    platform = latest.get(session.group_id, {}).get("platform", "")
+                    if platform:
+                        await store.for_session(session.group_id, platform)
+                sessions = set(await store.get_tracked_sessions())
+            names = {
+                GroupSession(item["platform"], item["group_id"]): item["group_name"]
+                for item in history
+                if item["group_id"]
+            }
+            sessions.update(names)
+            sorted_groups = sorted({session.group_id for session in sessions})
+            details: list[IncrementalGroupDirectoryItemDTO] = [
+                {
+                    "group_id": session.group_id,
+                    "platform_id": session.platform_id,
+                    "group_name": names.get(session, ""),
+                }
+                for session in sorted(sessions)
+            ]
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {"groups": sorted_groups, "group_details": details},
+                }
+            )
         except Exception as e:
             logger.error(f"获取增量群聊列表异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -351,7 +384,32 @@ class DataManagementRoutes:
             if not group_id:
                 return error_response("Missing group_id parameter", status_code=400)
 
-            query_dto: IncrementalBatchesQueryDTO = {"group_id": group_id}
+            try:
+                page = max(
+                    1, int(str(request.query.get("page") or payload.get("page") or 1))
+                )
+                page_size = min(
+                    100,
+                    max(
+                        1,
+                        int(
+                            str(
+                                request.query.get("page_size")
+                                or payload.get("page_size")
+                                or 20
+                            )
+                        ),
+                    ),
+                )
+            except (TypeError, ValueError):
+                return error_response("页码和每页数量必须是整数", status_code=400)
+            platform_id = str(
+                request.query.get("platform_id") or payload.get("platform_id") or ""
+            ).strip()
+            query_dto: IncrementalBatchesQueryDTO = {
+                "group_id": group_id,
+                "platform_id": platform_id,
+            }
 
             store = self._incremental_store
             if not store:
@@ -359,7 +417,12 @@ class DataManagementRoutes:
                     "IncrementalStore not initialized", status_code=503
                 )
 
-            batches = await store.get_all_batches_with_details(query_dto["group_id"])
+            if platform_id and self.analysis_service:
+                platform_id = self.analysis_service.bot_manager.resolve_platform_id(
+                    platform_id
+                )
+            store = await store.for_session(group_id, platform_id)
+            result = await store.list_batch_page(query_dto["group_id"], page, page_size)
             cursor_ts, cursor_msg_ids = await store.get_last_analyzed_cursor(
                 query_dto["group_id"]
             )
@@ -369,14 +432,23 @@ class DataManagementRoutes:
                     "status": "ok",
                     "data": {
                         "group_id": group_id,
-                        "batches": batches,
+                        "platform_id": platform_id,
+                        "batches": result.items,
+                        "total": result.total,
+                        "page": result.page,
+                        "page_size": result.page_size,
                         "cursor": {
                             "timestamp": cursor_ts,
+                            "group_id": group_id,
+                            "last_analyzed_timestamp": cursor_ts or 0,
+                            "last_message_timestamp": result.last_message_timestamp,
                             "tracked_message_ids_count": len(cursor_msg_ids),
                         },
                     },
                 }
             )
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
         except Exception as e:
             logger.error(f"获取增量批次列表异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -397,7 +469,11 @@ class DataManagementRoutes:
             if not group_id or not batch_id:
                 return error_response("Missing group_id or batch_id", status_code=400)
 
+            platform_id = str(
+                request.query.get("platform_id") or payload.get("platform_id") or ""
+            ).strip()
             query_dto: IncrementalBatchDetailQueryDTO = {
+                "platform_id": platform_id,
                 "group_id": group_id,
                 "batch_id": batch_id,
             }
@@ -408,6 +484,11 @@ class DataManagementRoutes:
                     "IncrementalStore not initialized", status_code=503
                 )
 
+            if platform_id and self.analysis_service:
+                platform_id = self.analysis_service.bot_manager.resolve_platform_id(
+                    platform_id
+                )
+            store = await store.for_session(group_id, platform_id)
             batch = await store.get_batch_detail(
                 query_dto["group_id"], query_dto["batch_id"]
             )
@@ -417,6 +498,8 @@ class DataManagementRoutes:
                 )
 
             return json_response({"status": "ok", "data": batch.to_dict()})
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
         except Exception as e:
             logger.error(f"获取增量批次详情异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -438,7 +521,11 @@ class DataManagementRoutes:
             if not group_id or not batch_id:
                 return error_response("Missing group_id or batch_id", status_code=400)
 
+            platform_id = str(
+                payload.get("platform_id") or request.query.get("platform_id") or ""
+            ).strip()
             delete_dto: IncrementalBatchDeleteDTO = {
+                "platform_id": platform_id,
                 "group_id": group_id,
                 "batch_id": batch_id,
             }
@@ -449,9 +536,15 @@ class DataManagementRoutes:
                     "IncrementalStore not initialized", status_code=503
                 )
 
-            deleted = await store.delete_batch(
-                delete_dto["group_id"], delete_dto["batch_id"]
-            )
+            async with self._mutation_guard(group_id, platform_id or None):
+                if platform_id and self.analysis_service:
+                    platform_id = self.analysis_service.bot_manager.resolve_platform_id(
+                        platform_id
+                    )
+                store = await store.for_session(group_id, platform_id)
+                deleted = await store.delete_batch(
+                    delete_dto["group_id"], delete_dto["batch_id"]
+                )
             return json_response(
                 {
                     "status": "ok",
@@ -462,6 +555,12 @@ class DataManagementRoutes:
                     },
                 }
             )
+        except DuplicateGroupTaskError:
+            return error_response(
+                "此群有任务正在执行，请结束后再修改业务数据", status_code=409
+            )
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
         except Exception as e:
             logger.error(f"删除增量批次异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -479,7 +578,13 @@ class DataManagementRoutes:
             if not group_id:
                 return error_response("Missing group_id", status_code=400)
 
-            reset_dto: IncrementalResetDTO = {"group_id": group_id}
+            platform_id = str(
+                payload.get("platform_id") or request.query.get("platform_id") or ""
+            ).strip()
+            reset_dto: IncrementalResetDTO = {
+                "group_id": group_id,
+                "platform_id": platform_id,
+            }
 
             store = self._incremental_store
             if not store:
@@ -487,7 +592,13 @@ class DataManagementRoutes:
                     "IncrementalStore not initialized", status_code=503
                 )
 
-            deleted_count = await store.reset_group(reset_dto["group_id"])
+            async with self._mutation_guard(group_id, platform_id or None):
+                if platform_id and self.analysis_service:
+                    platform_id = self.analysis_service.bot_manager.resolve_platform_id(
+                        platform_id
+                    )
+                store = await store.for_session(group_id, platform_id)
+                deleted_count = await store.reset_group(reset_dto["group_id"])
             return json_response(
                 {
                     "status": "ok",
@@ -498,6 +609,12 @@ class DataManagementRoutes:
                     },
                 }
             )
+        except DuplicateGroupTaskError:
+            return error_response(
+                "此群有任务正在执行，请结束后再修改业务数据", status_code=409
+            )
+        except ValueError as e:
+            return error_response(str(e), status_code=400)
         except Exception as e:
             logger.error(f"重置增量状态异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -538,6 +655,7 @@ class DataManagementRoutes:
 
             items, total = await asyncio.to_thread(
                 store.list_all_checkpoints,
+                platform=request.query.get("platform"),
                 limit=query_dto.get("limit", 50),
                 offset=query_dto.get("offset", 0),
                 group_id=query_dto.get("group_id"),
@@ -563,7 +681,10 @@ class DataManagementRoutes:
             groups = await asyncio.to_thread(
                 store.get_distinct_checkpoint_groups,
             )
-            return json_response({"status": "ok", "data": {"groups": groups}})
+            sessions = await asyncio.to_thread(store.get_checkpoint_group_sessions)
+            return json_response(
+                {"status": "ok", "data": {"groups": groups, "sessions": sessions}}
+            )
         except Exception as e:
             logger.error(f"获取 Checkpoint 群号列表异常: {e}", exc_info=True)
             return error_response(str(e), status_code=500)
@@ -661,21 +782,22 @@ class DataManagementRoutes:
                     "CheckpointStore not initialized", status_code=503
                 )
 
-            if delete_dto.get("stage_name"):
-                deleted = await asyncio.to_thread(
-                    store.delete_checkpoint,
-                    delete_dto["group_id"],
-                    delete_dto["date_str"],
-                    delete_dto["stage_name"],
-                    trace_id=delete_dto["trace_id"],
-                )
-            else:
-                await asyncio.to_thread(
-                    store.clear_checkpoints,
-                    delete_dto["group_id"],
-                    delete_dto["date_str"],
-                )
-                deleted = True
+            async with self._mutation_guard(group_id):
+                if delete_dto.get("stage_name"):
+                    deleted = await asyncio.to_thread(
+                        store.delete_checkpoint,
+                        delete_dto["group_id"],
+                        delete_dto["date_str"],
+                        delete_dto["stage_name"],
+                        trace_id=delete_dto["trace_id"],
+                    )
+                else:
+                    await asyncio.to_thread(
+                        store.clear_checkpoints,
+                        delete_dto["group_id"],
+                        delete_dto["date_str"],
+                    )
+                    deleted = True
 
             return json_response(
                 {
@@ -688,6 +810,10 @@ class DataManagementRoutes:
                         "trace_id": trace_id or None,
                     },
                 }
+            )
+        except DuplicateGroupTaskError:
+            return error_response(
+                "此群有任务正在执行，请结束后再修改业务数据", status_code=409
             )
         except Exception as e:
             logger.error(f"删除 Checkpoint 异常: {e}", exc_info=True)

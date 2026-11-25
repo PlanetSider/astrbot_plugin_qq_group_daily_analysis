@@ -20,8 +20,8 @@ from astrbot_plugin_qq_group_daily_analysis.src.infrastructure.webui.active_task
 )
 from astrbot_plugin_qq_group_daily_analysis.src.infrastructure.webui.plugin_page_bridge import (
     PluginPageWebUIBridge,
-    _config_key_to_folder,
-    _sanitize_path_segment,
+    config_key_to_folder,
+    sanitize_path_segment,
 )
 from astrbot_plugin_qq_group_daily_analysis.src.shared.constants import AnalysisStage
 
@@ -37,6 +37,7 @@ def bridge_setup(temp_db: Path, tmp_path: Path):
     active_mgr = ActiveTaskManager()
     mock_context = MagicMock()
     mock_analysis_svc = MagicMock()
+    mock_analysis_svc.bot_manager.resolve_platform_id.side_effect = lambda value: value
     mock_dispatcher = MagicMock()
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -69,9 +70,9 @@ def test_custom_t2i_probe_is_registered_on_plugin_bridge(bridge_setup):
 
 
 def test_path_sanitization_helpers():
-    assert _sanitize_path_segment("basic.enable_reply") == "basic_enable_reply"
-    assert _sanitize_path_segment("abc-123_XYZ") == "abc-123_XYZ"
-    assert _config_key_to_folder("basic.daily_comic.path") == "basic/daily_comic/path"
+    assert sanitize_path_segment("basic.enable_reply") == "basic_enable_reply"
+    assert sanitize_path_segment("abc-123_XYZ") == "abc-123_XYZ"
+    assert config_key_to_folder("basic.daily_comic.path") == "basic/daily_comic/path"
 
 
 @pytest.mark.asyncio
@@ -197,7 +198,7 @@ async def test_api_trigger_task_duplicate_rejection(bridge_setup):
         "astrbot_plugin_qq_group_daily_analysis.src.infrastructure.webui.plugin_page_bridge.request",
         create=True,
     ) as mock_req:
-        mock_req.json = AsyncMock(return_value={"group_id": "123456"})
+        mock_req.json = AsyncMock(return_value={"group_id": "123456", "platform": "onebot"})
         mock_req.query = {}
 
         res = await bridge.api_trigger_task()
@@ -213,7 +214,7 @@ async def test_api_trigger_task_duplicate_rejection(bridge_setup):
         "astrbot_plugin_qq_group_daily_analysis.src.infrastructure.webui.plugin_page_bridge.request",
         create=True,
     ) as mock_req:
-        mock_req.json = AsyncMock(return_value={"group_id": "123456"})
+        mock_req.json = AsyncMock(return_value={"group_id": "123456", "platform": "onebot"})
         mock_req.query = {}
 
         res = await bridge.api_trigger_task()

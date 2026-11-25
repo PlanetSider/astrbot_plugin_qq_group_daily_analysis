@@ -1,15 +1,20 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { fileURLToPath, URL } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
+import { moduleAliases } from "./moduleAliases";
 
-const devOnlyModule = /[/\\]src[/\\](?:mocks[/\\]|shared[/\\]api[/\\]devBridge\.ts$|widgets[/\\]dev-bar[/\\])/;
+const devOnlyModule =
+  /[/\\]src[/\\](?:mocks[/\\]|shared[/\\]api[/\\]dev(?:Bridge|ThemeContext)\.ts$|widgets[/\\]dev-bar[/\\])/;
 
 const classicScriptPlugin = (): Plugin => ({
   name: "classic-script-plugin",
   apply: "build",
   generateBundle(_options, bundle) {
     for (const chunk of Object.values(bundle)) {
-      if (chunk.type === "chunk" && Object.keys(chunk.modules).some((id) => devOnlyModule.test(id))) {
+      if (
+        chunk.type === "chunk" &&
+        Object.keys(chunk.modules).some((id) => devOnlyModule.test(id))
+      ) {
         this.error("生产构建包含开发模式或 mock 模块");
       }
     }
@@ -24,17 +29,16 @@ const classicScriptPlugin = (): Plugin => ({
 
 export default defineConfig({
   base: "./",
-  plugins: [react(), classicScriptPlugin()],
+  plugins: [react(), tailwindcss(), classicScriptPlugin()],
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    alias: moduleAliases.filter(({ find }) => find !== "@plugin-tests"),
   },
   build: {
     outDir: "../pages/daily-analysis",
     emptyOutDir: true,
     cssCodeSplit: false,
-    assetsInlineLimit: 150000,
+    // 字体按字符分片加载，不能把全部字形内嵌到首屏 CSS 中。
+    assetsInlineLimit: (path, content) => !/\.woff2?$/i.test(path) && content.length < 150000,
     chunkSizeWarningLimit: 5000,
     rollupOptions: {
       treeshake: {
@@ -60,4 +64,3 @@ export default defineConfig({
     },
   },
 });
-
